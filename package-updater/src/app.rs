@@ -37,6 +37,7 @@ pub enum Message {
     SwitchTab(PopupTab),
     CheckForUpdates,
     DelayedCheckForUpdates,
+    DelayedStartupCheck,
     UpdatesChecked(Result<UpdateInfo, String>),
     ConfigChanged(PackageUpdaterConfig),
     LaunchTerminalUpdate,
@@ -89,8 +90,19 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
 
         let mut tasks = vec![];
 
+        // Auto-discover package managers on startup if none is configured
+        if app.config.package_manager.is_none() {
+            tasks.push(Task::done(cosmic::Action::App(Message::DiscoverPackageManagers)));
+        }
+
+        // Check for updates on startup if enabled and package manager is available
         if app.config.auto_check_on_startup {
-            tasks.push(Task::done(cosmic::Action::App(Message::CheckForUpdates)));
+            if app.config.package_manager.is_some() {
+                tasks.push(Task::done(cosmic::Action::App(Message::CheckForUpdates)));
+            } else {
+                // Delay the update check until after package manager discovery
+                tasks.push(Task::done(cosmic::Action::App(Message::DelayedStartupCheck)));
+            }
         }
 
         (app, Task::batch(tasks))
@@ -317,11 +329,27 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                 Task::none()
             }
             Message::ConfigChanged(config) => {
+                let old_package_manager = self.config.package_manager;
                 self.config = config;
                 PackageUpdaterConfig::set_entry(&self.config_handler, &self.config);
-                Task::none()
+
+                // If package manager was just auto-configured and startup check is enabled,
+                // trigger the delayed startup check
+                if old_package_manager.is_none() && self.config.package_manager.is_some() && self.config.auto_check_on_startup {
+                    Task::done(cosmic::Action::App(Message::DelayedStartupCheck))
+                } else {
+                    Task::none()
+                }
             }
-            Message::Timer => Task::none(),
+            Message::Timer => {
+                // Automatically check for updates if a package manager is configured
+                // and we're not already checking
+                if !self.checking_updates && self.config.package_manager.is_some() {
+                    Task::done(cosmic::Action::App(Message::CheckForUpdates))
+                } else {
+                    Task::none()
+                }
+            }
             Message::DiscoverPackageManagers => {
                 self.available_package_managers = PackageManagerDetector::detect_available();
                 if self.config.package_manager.is_none() {
@@ -332,6 +360,14 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                     }
                 }
                 Task::none()
+            }
+            Message::DelayedStartupCheck => {
+                // Triggered after package manager discovery to perform startup update check
+                if self.config.auto_check_on_startup && self.config.package_manager.is_some() {
+                    Task::done(cosmic::Action::App(Message::CheckForUpdates))
+                } else {
+                    Task::none()
+                }
             }
             Message::SelectPackageManager(pm) => {
                 let mut config = self.config.clone();
@@ -372,8 +408,14 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        let timer_subscription = time::every(Duration::from_secs(60)).map(|_| Message::Timer);
-        Subscription::batch(vec![timer_subscription])
+        // Only set up timer if we have a package manager configured
+        if self.config.package_manager.is_some() {
+            let timer_subscription = time::every(Duration::from_secs(self.config.check_interval_minutes as u64 * 60))
+                .map(|_| Message::Timer);
+            Subscription::batch(vec![timer_subscription])
+        } else {
+            Subscription::none()
+        }
     }
 }
 
