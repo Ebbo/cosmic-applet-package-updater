@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod package_manager;
+mod notification;
 
 use app::CosmicAppletPackageUpdater;
 

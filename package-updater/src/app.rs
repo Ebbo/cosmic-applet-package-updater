@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::PackageUpdaterConfig;
 use crate::package_manager::{PackageManager, PackageManagerDetector, UpdateChecker, UpdateInfo};
+use crate::notification::UpdateNotifier;
 
 pub struct CosmicAppletPackageUpdater {
     core: Core,
@@ -41,6 +42,7 @@ pub enum Message {
     UpdatesChecked(Result<UpdateInfo, String>),
     ConfigChanged(PackageUpdaterConfig),
     LaunchTerminalUpdate,
+    NotifyAppletsUpdated,
     Timer,
     DiscoverPackageManagers,
     SelectPackageManager(PackageManager),
@@ -98,7 +100,14 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
         // Check for updates on startup if enabled and package manager is available
         if app.config.auto_check_on_startup {
             if app.config.package_manager.is_some() {
-                tasks.push(Task::done(cosmic::Action::App(Message::CheckForUpdates)));
+                // Add a random delay (1-2 seconds) to prevent multiple instances from checking simultaneously
+                let delay_ms = 1000 + (rand::random::<u64>() % 1001);
+                tasks.push(Task::perform(
+                    async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    },
+                    |_| cosmic::Action::App(Message::CheckForUpdates),
+                ));
             } else {
                 // Delay the update check until after package manager discovery
                 tasks.push(Task::done(cosmic::Action::App(Message::DelayedStartupCheck)));
@@ -339,10 +348,33 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                             // Add a delay before checking for updates to allow system to stabilize
                             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                         },
-                        |_| cosmic::Action::App(Message::DelayedCheckForUpdates),
+                        |_| cosmic::Action::App(Message::NotifyAppletsUpdated),
                     );
                 }
                 Task::none()
+            }
+            Message::NotifyAppletsUpdated => {
+                // First trigger our own delayed update check
+                let delayed_check_task = Task::perform(
+                    async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    },
+                    |_| cosmic::Action::App(Message::DelayedCheckForUpdates),
+                );
+
+                // Then notify other applets
+                let notify_task = Task::perform(
+                    async move {
+                        if let Ok(notifier) = UpdateNotifier::new().await {
+                            // Send both custom signals and standard notifications
+                            let _ = notifier.notify_update_completed().await;
+                            let _ = notifier.broadcast_system_updated().await;
+                        }
+                    },
+                    |_| cosmic::Action::App(Message::Timer), // Use Timer as a no-op message
+                );
+
+                Task::batch(vec![delayed_check_task, notify_task])
             }
             Message::ConfigChanged(config) => {
                 let old_package_manager = self.config.package_manager;
@@ -380,7 +412,14 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
             Message::DelayedStartupCheck => {
                 // Triggered after package manager discovery to perform startup update check
                 if self.config.auto_check_on_startup && self.config.package_manager.is_some() {
-                    Task::done(cosmic::Action::App(Message::CheckForUpdates))
+                    // Add a random delay (1-2 seconds) to prevent multiple instances from checking simultaneously
+                    let delay_ms = 1000 + (rand::random::<u64>() % 1001);
+                    Task::perform(
+                        async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                        },
+                        |_| cosmic::Action::App(Message::CheckForUpdates),
+                    )
                 } else {
                     Task::none()
                 }

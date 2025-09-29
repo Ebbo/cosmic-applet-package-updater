@@ -293,6 +293,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-executor"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "497c00e0fd83a72a79a39fcbd8e3e2f055d6f6c7e025f3b3d91f4f8e76527fb8"
+dependencies = [
+ "async-task",
+ "concurrent-queue",
+ "fastrand 2.3.0",
+ "futures-lite 2.6.0",
+ "pin-project-lite",
+ "slab",
+]
+
+[[package]]
 name = "async-io"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -366,6 +380,24 @@ dependencies = [
  "futures-lite 1.13.0",
  "rustix 0.38.44",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "async-process"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc50921ec0055cdd8a16de48773bfeec5c972598674347252c0399676be7da75"
+dependencies = [
+ "async-channel",
+ "async-io 2.4.1",
+ "async-lock 3.4.0",
+ "async-signal",
+ "async-task",
+ "blocking",
+ "cfg-if",
+ "event-listener 5.4.0",
+ "futures-lite 2.6.0",
+ "rustix 1.0.7",
 ]
 
 [[package]]
@@ -3437,10 +3469,12 @@ dependencies = [
  "cosmic-config 0.1.0 (git+https://github.com/pop-os/libcosmic.git?rev=52b802a)",
  "futures",
  "libcosmic",
+ "rand 0.8.5",
  "regex",
  "serde",
  "tokio",
  "toml",
+ "zbus 5.7.1",
 ]
 
 [[package]]
@@ -6035,7 +6069,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "675d170b632a6ad49804c8cf2105d7c31eddd3312555cffd4b740e08e97c25e6"
 dependencies = [
  "async-broadcast 0.5.1",
- "async-process",
+ "async-process 1.8.1",
  "async-recursion",
  "async-trait",
  "byteorder",
@@ -6071,8 +6105,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3a7c7cee313d044fca3f48fa782cb750c79e4ca76ba7bc7718cd4024cdf6f68"
 dependencies = [
  "async-broadcast 0.7.2",
+ "async-executor",
+ "async-io 2.4.1",
+ "async-lock 3.4.0",
+ "async-process 2.5.0",
  "async-recursion",
+ "async-task",
  "async-trait",
+ "blocking",
  "enumflags2",
  "event-listener 5.4.0",
  "futures-core",
