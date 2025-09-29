@@ -338,15 +338,20 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
 
                     return Task::perform(
                         async move {
-                            let _ = std::process::Command::new(&terminal)
+                            // Start the terminal process and wait for it to complete
+                            if let Ok(mut child) = tokio::process::Command::new(&terminal)
                                 .arg("-e")
                                 .arg("sh")
                                 .arg("-c")
                                 .arg(&format!("{} && echo 'Update completed. Press Enter to exit...' && read", command))
-                                .spawn();
+                                .spawn()
+                            {
+                                // Wait for the terminal window to close (process to exit)
+                                let _ = child.wait().await;
 
-                            // Add a delay before checking for updates to allow system to stabilize
-                            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                                // Add a small delay to allow system to stabilize after update
+                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                            }
                         },
                         |_| cosmic::Action::App(Message::NotifyAppletsUpdated),
                     );
@@ -354,27 +359,20 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                 Task::none()
             }
             Message::NotifyAppletsUpdated => {
-                // First trigger our own delayed update check
-                let delayed_check_task = Task::perform(
+                // First notify other applets that updates have completed
+                let notify_task = Task::perform(
                     async move {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                        if let Ok(notifier) = UpdateNotifier::new().await {
+                            // Send custom COSMIC signal for package-related applets
+                            let _ = notifier.notify_update_completed().await;
+                            // Send standard PackageKit signal for compatibility
+                            let _ = notifier.broadcast_system_updated().await;
+                        }
                     },
                     |_| cosmic::Action::App(Message::DelayedCheckForUpdates),
                 );
 
-                // Then notify other applets
-                let notify_task = Task::perform(
-                    async move {
-                        if let Ok(notifier) = UpdateNotifier::new().await {
-                            // Send both custom signals and standard notifications
-                            let _ = notifier.notify_update_completed().await;
-                            let _ = notifier.broadcast_system_updated().await;
-                        }
-                    },
-                    |_| cosmic::Action::App(Message::Timer), // Use Timer as a no-op message
-                );
-
-                Task::batch(vec![delayed_check_task, notify_task])
+                notify_task
             }
             Message::ConfigChanged(config) => {
                 let old_package_manager = self.config.package_manager;
