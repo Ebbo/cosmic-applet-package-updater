@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.cosmic.PackageUpdater</id>
+
+  <name>Package Updater</name>
+  <summary>COSMIC Package Updater Applet for Arch Linux</summary>
+
+  <description>
+    <p>
+      A modern package update manager applet for the COSMIC desktop environment on Arch Linux,
+      providing seamless package management directly from the panel.
+    </p>
+    <p>
+      Features include support for pacman, paru, and yay package managers, visual status indicators,
+      automatic update checking, and separate tracking of official repository and AUR packages.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">com.cosmic.PackageUpdater.desktop</launchable>
+
+  <provides>
+    <binary>package-updater</binary>
+  </provides>
+
+  <categories>
+    <category>System</category>
+    <category>PackageManager</category>
+  </categories>
+
+  <keywords>
+    <keyword>package</keyword>
+    <keyword>update</keyword>
+    <keyword>pacman</keyword>
+    <keyword>paru</keyword>
+    <keyword>yay</keyword>
+    <keyword>AUR</keyword>
+    <keyword>arch</keyword>
+    <keyword>applet</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/Ebbo/cosmic-applet-package-updater</url>
+  <url type="bugtracker">https://github.com/Ebbo/cosmic-applet-package-updater/issues</url>
+
+  <project_license>GPL-3.0</project_license>
+  <metadata_license>CC0-1.0</metadata_license>
+
+  <releases>
+    <release version="1.0.0" date="2024-09-27">
+      <description>
+        <p>Initial release of COSMIC Package Updater Applet</p>
+        <ul>
+          <li>Support for pacman, paru, and yay package managers</li>
+          <li>Visual status indicators in COSMIC panel</li>
+          <li>Automatic update checking with configurable intervals</li>
+          <li>Separate tracking of official and AUR packages</li>
+          <li>Terminal integration for system updates</li>
+          <li>Persistent configuration management</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <content_rating type="oars-1.1" />
+</component>

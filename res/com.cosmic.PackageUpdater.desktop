@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Package Updater
+Comment=COSMIC Package Updater Applet for Arch Linux
+Icon=software-update-available
+Exec=package-updater
+Categories=System;
+X-CosmicApplet=true

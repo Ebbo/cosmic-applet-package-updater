@@ -1,0 +1,24 @@
+[package]
+name = "package-updater"
+version = "1.0.0"
+edition = "2021"
+license = "GPL-3.0"
+rust-version = "1.80"
+description = "COSMIC Package Updater Applet for Arch Linux"
+authors = ["COSMIC Community"]
+
+[dependencies]
+tokio = { version = "1.45.1", features = ["full"] }
+serde = { version = "1.0.219", features = ["derive"] }
+anyhow = "1.0.98"
+futures = "0.3.31"
+chrono = "0.4.41"
+regex = "1.11.1"
+toml = "0.8"
+cosmic-config = { git = "https://github.com/pop-os/libcosmic.git", rev = "52b802a" }
+
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic.git"
+rev = "52b802a"
+default-features = false
+features = ["applet", "tokio", "wayland", "autosize"]
