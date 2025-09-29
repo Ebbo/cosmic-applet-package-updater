@@ -113,27 +113,45 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        let icon_button = self.core
-            .applet
-            .icon_button(&self.get_icon_name())
+        if self.config.show_update_count {
+            // Always show custom button with icon and count (empty string when 0)
+            let count_text = if self.update_info.total_updates > 0 {
+                format!("{}", self.update_info.total_updates)
+            } else {
+                String::new()
+            };
+
+            let custom_button = button::custom(
+                row()
+                    .align_y(cosmic::iced::Alignment::Center)
+                    .spacing(2)
+                    .push(cosmic::widget::icon::from_name(self.get_icon_name()).size(16))
+                    .push(text(count_text).size(12))
+            )
+            .padding([8, 4]) // More top padding to push icon down from panel top
+            .class(cosmic::theme::Button::AppletIcon)
             .on_press(Message::TogglePopup);
 
-        let element = if self.update_info.has_updates() {
-            cosmic::widget::mouse_area(icon_button)
-                .on_middle_press(Message::LaunchTerminalUpdate)
-                .into()
+            if self.update_info.has_updates() {
+                cosmic::widget::mouse_area(custom_button)
+                    .on_middle_press(Message::LaunchTerminalUpdate)
+                    .into()
+            } else {
+                custom_button.into()
+            }
         } else {
-            icon_button.into()
-        };
+            let icon_button = self.core
+                .applet
+                .icon_button(&self.get_icon_name())
+                .on_press(Message::TogglePopup);
 
-        if self.config.show_update_count && self.update_info.has_updates() {
-            cosmic::widget::tooltip(
-                element,
-                text(format!("{} updates available - Middle-click to update", self.update_info.total_updates)),
-                cosmic::widget::tooltip::Position::Bottom
-            ).into()
-        } else {
-            element
+            if self.update_info.has_updates() {
+                cosmic::widget::mouse_area(icon_button)
+                    .on_middle_press(Message::LaunchTerminalUpdate)
+                    .into()
+            } else {
+                icon_button.into()
+            }
         }
     }
 
@@ -246,10 +264,9 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                     self.checking_updates = true;
                     self.error_message = None;
                     let checker = UpdateChecker::new(pm);
-                    let include_aur = self.config.include_aur_updates;
                     return Task::perform(
                         async move {
-                            match checker.check_updates(include_aur).await {
+                            match checker.check_updates(true).await {
                                 Ok(result) => Ok(result),
                                 Err(e) => {
                                     eprintln!("Update check failed: {}", e);
@@ -269,12 +286,11 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                     self.checking_updates = true;
                     self.error_message = None;
                     let checker = UpdateChecker::new(pm);
-                    let include_aur = self.config.include_aur_updates;
                     return Task::perform(
                         async move {
                             // Additional small delay and error handling for post-update checks
                             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                            match checker.check_updates(include_aur).await {
+                            match checker.check_updates(true).await {
                                 Ok(result) => Ok(result),
                                 Err(e) => {
                                     eprintln!("Delayed update check failed: {}", e);
@@ -631,7 +647,7 @@ impl CosmicAppletPackageUpdater {
         let interval_value = self.config.check_interval_minutes.to_string();
         widgets.push(
             text_input("60", interval_value)
-                .on_input(|s| Message::SetCheckInterval(s.parse::<u32>().unwrap_or(60).max(5).min(1440)))
+                .on_input(|s| Message::SetCheckInterval(s.parse::<u32>().unwrap_or(60).max(1).min(1440)))
                 .width(cosmic::iced::Length::Fill)
                 .into(),
         );

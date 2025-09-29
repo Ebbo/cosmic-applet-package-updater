@@ -107,22 +107,40 @@ impl UpdateChecker {
         Self { package_manager }
     }
 
-    pub async fn check_updates(&self, include_aur: bool) -> Result<UpdateInfo> {
+    pub async fn check_updates(&self, _include_aur: bool) -> Result<UpdateInfo> {
         let mut update_info = UpdateInfo::new();
 
-        // Check official updates
-        let official_updates = self.check_official_updates().await?;
-        update_info.official_updates = official_updates.len();
-        update_info.packages.extend(official_updates);
-
-        // Check AUR updates if requested and supported
-        if include_aur && self.package_manager.supports_aur() {
-            let aur_updates = self.check_aur_updates().await?;
-            update_info.aur_updates = aur_updates.len();
-            update_info.packages.extend(aur_updates);
+        // Step 1: Check official updates first and wait for completion
+        match self.check_official_updates().await {
+            Ok(official_updates) => {
+                let count = official_updates.len();
+                update_info.official_updates = count;
+                update_info.packages.extend(official_updates);
+            }
+            Err(e) => {
+                eprintln!("Failed to check official updates: {}", e);
+                // Continue with AUR check even if official fails
+            }
         }
 
+        // Step 2: Only after official check is done, check AUR updates
+        if self.package_manager.supports_aur() {
+            match self.check_aur_updates().await {
+                Ok(aur_updates) => {
+                    let count = aur_updates.len();
+                    update_info.aur_updates = count;
+                    update_info.packages.extend(aur_updates);
+                }
+                Err(e) => {
+                    eprintln!("Failed to check AUR updates: {}", e);
+                    // Continue even if AUR check fails
+                }
+            }
+        }
+
+        // Step 3: Calculate final total only after both checks are complete
         update_info.total_updates = update_info.packages.len();
+
         Ok(update_info)
     }
 
