@@ -17,6 +17,7 @@ regex = "1.11.1"
 toml = "0.8"
 rand = "0.8"
 zbus = "5.1.1"
+async-stream = "0.3"
 cosmic-config = { git = "https://github.com/pop-os/libcosmic.git", rev = "52b802a" }
 
 [dependencies.libcosmic]

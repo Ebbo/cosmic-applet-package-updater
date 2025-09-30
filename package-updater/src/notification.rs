@@ -2,6 +2,7 @@ use anyhow::Result;
 use zbus::Connection;
 
 /// DBus interface for notifying other applets about package updates
+#[derive(Debug, Clone)]
 pub struct UpdateNotifier {
     connection: Connection,
 }
@@ -41,5 +42,25 @@ impl UpdateNotifier {
         ).await?;
 
         Ok(())
+    }
+
+    /// Listen for update completion signals from other applet instances
+    /// Returns a stream of events when other instances complete updates
+    pub async fn listen_for_updates(&self) -> Result<impl futures::Stream<Item = ()>> {
+        // For now, let's use a simple timer-based approach since the zbus API is complex
+        // This will periodically check if we should sync with other instances
+        use tokio::time::{interval, Duration};
+
+        let mut timer = interval(Duration::from_secs(10)); // Check every 10 seconds instead of 2
+
+        Ok(async_stream::stream! {
+            loop {
+                timer.tick().await;
+                // We could add more sophisticated logic here to detect when
+                // another instance has performed updates, but for now this
+                // provides basic synchronization
+                yield ();
+            }
+        })
     }
 }

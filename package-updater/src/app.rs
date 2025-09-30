@@ -2,6 +2,7 @@ use cosmic::app::{Core, Task};
 use cosmic::cosmic_config::Config;
 use cosmic::iced::{time, Subscription, window::Id, Limits};
 use cosmic::iced::platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup};
+use futures::StreamExt;
 use cosmic::widget::{
     button, column, row, text, text_input, toggler, Space, horizontal_space, divider, scrollable
 };
@@ -23,6 +24,9 @@ pub struct CosmicAppletPackageUpdater {
     checking_updates: bool,
     error_message: Option<String>,
     available_package_managers: Vec<PackageManager>,
+    notifier: Option<UpdateNotifier>,
+    last_sync_check: Option<Instant>,
+    sync_in_progress: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +56,8 @@ pub enum Message {
     ToggleShowNotifications(bool),
     ToggleShowUpdateCount(bool),
     SetPreferredTerminal(String),
+    SyncWithOtherInstances,
+    NotifierInitialized(Option<UpdateNotifier>),
 }
 
 impl cosmic::Application for CosmicAppletPackageUpdater {
@@ -88,9 +94,26 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
             checking_updates: false,
             error_message: None,
             available_package_managers,
+            notifier: None,
+            last_sync_check: None,
+            sync_in_progress: false,
         };
 
         let mut tasks = vec![];
+
+        // Initialize the notifier for DBus communication
+        tasks.push(Task::perform(
+            async move {
+                match UpdateNotifier::new().await {
+                    Ok(notifier) => Some(notifier),
+                    Err(e) => {
+                        eprintln!("Failed to initialize DBus notifier: {}", e);
+                        None
+                    }
+                }
+            },
+            |notifier| cosmic::Action::App(Message::NotifierInitialized(notifier)),
+        ));
 
         // Auto-discover package managers on startup if none is configured
         if app.config.package_manager.is_none() {
@@ -314,6 +337,7 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
             }
             Message::UpdatesChecked(result) => {
                 self.checking_updates = false;
+                self.sync_in_progress = false; // Reset sync flag
                 match result {
                     Ok(update_info) => {
                         self.update_info = update_info;
@@ -457,17 +481,87 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                 config.preferred_terminal = terminal;
                 Task::done(cosmic::Action::App(Message::ConfigChanged(config)))
             }
+            Message::NotifierInitialized(notifier) => {
+                self.notifier = notifier;
+                Task::none()
+            }
+            Message::SyncWithOtherInstances => {
+                // Sync update state when notified by other instances
+                // Only sync if enough time has passed since last sync and we're not in the middle of our own update
+                let now = Instant::now();
+                let should_sync = match self.last_sync_check {
+                    Some(last_sync) => now.duration_since(last_sync).as_secs() > 5, // Wait at least 5 seconds between syncs
+                    None => true,
+                };
+
+                if let Some(pm) = self.config.package_manager {
+                    // Only check if we're not already checking/syncing and enough time has passed
+                    if !self.checking_updates && !self.sync_in_progress && should_sync {
+                        // Check if we recently performed an update ourselves
+                        let recently_updated = self.last_check.map_or(false, |last| {
+                            now.duration_since(last).as_secs() < 10 // If we checked within last 10 seconds
+                        });
+
+                        if !recently_updated {
+                            self.sync_in_progress = true;
+                            self.last_sync_check = Some(now);
+                            self.error_message = None;
+                            let checker = UpdateChecker::new(pm);
+                            return Task::perform(
+                                async move {
+                                    // Delay to let system settle after other instance's update
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                                    match checker.check_updates(true).await {
+                                        Ok(result) => Ok(result),
+                                        Err(e) => {
+                                            eprintln!("Sync update check failed: {}", e);
+                                            Err(e)
+                                        }
+                                    }
+                                },
+                                |result| cosmic::Action::App(Message::UpdatesChecked(result.map_err(|e| e.to_string()))),
+                            );
+                        }
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
+        let mut subscriptions = vec![];
+
         // Only set up timer if we have a package manager configured
         if self.config.package_manager.is_some() {
             let timer_subscription = time::every(Duration::from_secs(self.config.check_interval_minutes as u64 * 60))
                 .map(|_| Message::Timer);
-            Subscription::batch(vec![timer_subscription])
-        } else {
+            subscriptions.push(timer_subscription);
+        }
+
+        // Set up DBus listener for synchronization with other instances
+        if self.notifier.is_some() {
+            let sync_subscription = Subscription::run_with_id(
+                "dbus_sync",
+async_stream::stream! {
+                    // Create a new notifier for the subscription
+                    if let Ok(notifier) = UpdateNotifier::new().await {
+                        if let Ok(stream) = notifier.listen_for_updates().await {
+                            let mut pinned_stream = std::pin::pin!(stream);
+                            while let Some(_) = pinned_stream.next().await {
+                                yield Message::SyncWithOtherInstances;
+                            }
+                        }
+                    }
+                }
+            );
+            subscriptions.push(sync_subscription);
+        }
+
+        if subscriptions.is_empty() {
             Subscription::none()
+        } else {
+            Subscription::batch(subscriptions)
         }
     }
 }
