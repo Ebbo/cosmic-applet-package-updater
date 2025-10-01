@@ -3492,6 +3492,7 @@ dependencies = [
  "cosmic-config 0.1.0 (git+https://github.com/pop-os/libcosmic.git?rev=52b802a)",
  "futures",
  "libcosmic",
+ "notify",
  "rand 0.8.5",
  "regex",
  "serde",

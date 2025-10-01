@@ -2,16 +2,15 @@ use cosmic::app::{Core, Task};
 use cosmic::cosmic_config::Config;
 use cosmic::iced::{time, Subscription, window::Id, Limits};
 use cosmic::iced::platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup};
-use futures::StreamExt;
 use cosmic::widget::{
     button, column, row, text, text_input, toggler, Space, horizontal_space, divider, scrollable
 };
 use cosmic::Element;
 use std::time::{Duration, Instant};
+use std::path::PathBuf;
 
 use crate::config::PackageUpdaterConfig;
 use crate::package_manager::{PackageManager, PackageManagerDetector, UpdateChecker, UpdateInfo};
-use crate::notification::UpdateNotifier;
 
 pub struct CosmicAppletPackageUpdater {
     core: Core,
@@ -24,9 +23,7 @@ pub struct CosmicAppletPackageUpdater {
     checking_updates: bool,
     error_message: Option<String>,
     available_package_managers: Vec<PackageManager>,
-    notifier: Option<UpdateNotifier>,
-    last_sync_check: Option<Instant>,
-    sync_in_progress: bool,
+    ignore_next_sync: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,12 +38,10 @@ pub enum Message {
     PopupClosed(Id),
     SwitchTab(PopupTab),
     CheckForUpdates,
-    DelayedCheckForUpdates,
     DelayedStartupCheck,
     UpdatesChecked(Result<UpdateInfo, String>),
     ConfigChanged(PackageUpdaterConfig),
     LaunchTerminalUpdate,
-    NotifyAppletsUpdated,
     Timer,
     DiscoverPackageManagers,
     SelectPackageManager(PackageManager),
@@ -56,8 +51,7 @@ pub enum Message {
     ToggleShowNotifications(bool),
     ToggleShowUpdateCount(bool),
     SetPreferredTerminal(String),
-    SyncWithOtherInstances,
-    NotifierInitialized(Option<UpdateNotifier>),
+    SyncFileChanged,
 }
 
 impl cosmic::Application for CosmicAppletPackageUpdater {
@@ -94,26 +88,10 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
             checking_updates: false,
             error_message: None,
             available_package_managers,
-            notifier: None,
-            last_sync_check: None,
-            sync_in_progress: false,
+            ignore_next_sync: true,
         };
 
         let mut tasks = vec![];
-
-        // Initialize the notifier for DBus communication
-        tasks.push(Task::perform(
-            async move {
-                match UpdateNotifier::new().await {
-                    Ok(notifier) => Some(notifier),
-                    Err(e) => {
-                        eprintln!("Failed to initialize DBus notifier: {}", e);
-                        None
-                    }
-                }
-            },
-            |notifier| cosmic::Action::App(Message::NotifierInitialized(notifier)),
-        ));
 
         // Auto-discover package managers on startup if none is configured
         if app.config.package_manager.is_none() {
@@ -123,11 +101,10 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
         // Check for updates on startup if enabled and package manager is available
         if app.config.auto_check_on_startup {
             if app.config.package_manager.is_some() {
-                // Add a random delay (1-2 seconds) to prevent multiple instances from checking simultaneously
-                let delay_ms = 1000 + (rand::random::<u64>() % 1001);
+                // Add a delay to allow system to stabilize
                 tasks.push(Task::perform(
                     async move {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     },
                     |_| cosmic::Action::App(Message::CheckForUpdates),
                 ));
@@ -311,33 +288,8 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                 }
                 Task::none()
             }
-            Message::DelayedCheckForUpdates => {
-                // Same as CheckForUpdates but triggered after a system update
-                // The delay is already handled in the calling task
-                if let Some(pm) = self.config.package_manager {
-                    self.checking_updates = true;
-                    self.error_message = None;
-                    let checker = UpdateChecker::new(pm);
-                    return Task::perform(
-                        async move {
-                            // Additional small delay and error handling for post-update checks
-                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                            match checker.check_updates(true).await {
-                                Ok(result) => Ok(result),
-                                Err(e) => {
-                                    eprintln!("Delayed update check failed: {}", e);
-                                    Err(e)
-                                }
-                            }
-                        },
-                        |result| cosmic::Action::App(Message::UpdatesChecked(result.map_err(|e| e.to_string()))),
-                    );
-                }
-                Task::none()
-            }
             Message::UpdatesChecked(result) => {
                 self.checking_updates = false;
-                self.sync_in_progress = false; // Reset sync flag
                 match result {
                     Ok(update_info) => {
                         self.update_info = update_info;
@@ -373,30 +325,14 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                                 // Wait for the terminal window to close (process to exit)
                                 let _ = child.wait().await;
 
-                                // Add a small delay to allow system to stabilize after update
-                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                // Add a delay to allow system to stabilize after update
+                                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                             }
                         },
-                        |_| cosmic::Action::App(Message::NotifyAppletsUpdated),
+                        |_| cosmic::Action::App(Message::CheckForUpdates),
                     );
                 }
                 Task::none()
-            }
-            Message::NotifyAppletsUpdated => {
-                // First notify other applets that updates have completed
-                let notify_task = Task::perform(
-                    async move {
-                        if let Ok(notifier) = UpdateNotifier::new().await {
-                            // Send custom COSMIC signal for package-related applets
-                            let _ = notifier.notify_update_completed().await;
-                            // Send standard PackageKit signal for compatibility
-                            let _ = notifier.broadcast_system_updated().await;
-                        }
-                    },
-                    |_| cosmic::Action::App(Message::DelayedCheckForUpdates),
-                );
-
-                notify_task
             }
             Message::ConfigChanged(config) => {
                 let old_package_manager = self.config.package_manager;
@@ -434,11 +370,10 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
             Message::DelayedStartupCheck => {
                 // Triggered after package manager discovery to perform startup update check
                 if self.config.auto_check_on_startup && self.config.package_manager.is_some() {
-                    // Add a random delay (1-2 seconds) to prevent multiple instances from checking simultaneously
-                    let delay_ms = 1000 + (rand::random::<u64>() % 1001);
+                    // Add a delay to allow system to stabilize
                     Task::perform(
                         async move {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         },
                         |_| cosmic::Action::App(Message::CheckForUpdates),
                     )
@@ -481,50 +416,28 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                 config.preferred_terminal = terminal;
                 Task::done(cosmic::Action::App(Message::ConfigChanged(config)))
             }
-            Message::NotifierInitialized(notifier) => {
-                self.notifier = notifier;
-                Task::none()
-            }
-            Message::SyncWithOtherInstances => {
-                // Sync update state when notified by other instances
-                // Only sync if enough time has passed since last sync and we're not in the middle of our own update
-                let now = Instant::now();
-                let should_sync = match self.last_sync_check {
-                    Some(last_sync) => now.duration_since(last_sync).as_secs() > 5, // Wait at least 5 seconds between syncs
-                    None => true,
-                };
-
-                if let Some(pm) = self.config.package_manager {
-                    // Only check if we're not already checking/syncing and enough time has passed
-                    if !self.checking_updates && !self.sync_in_progress && should_sync {
-                        // Check if we recently performed an update ourselves
-                        let recently_updated = self.last_check.map_or(false, |last| {
-                            now.duration_since(last).as_secs() < 10 // If we checked within last 10 seconds
-                        });
-
-                        if !recently_updated {
-                            self.sync_in_progress = true;
-                            self.last_sync_check = Some(now);
-                            self.error_message = None;
-                            let checker = UpdateChecker::new(pm);
-                            return Task::perform(
-                                async move {
-                                    // Delay to let system settle after other instance's update
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-                                    match checker.check_updates(true).await {
-                                        Ok(result) => Ok(result),
-                                        Err(e) => {
-                                            eprintln!("Sync update check failed: {}", e);
-                                            Err(e)
-                                        }
-                                    }
-                                },
-                                |result| cosmic::Action::App(Message::UpdatesChecked(result.map_err(|e| e.to_string()))),
-                            );
-                        }
-                    }
+            Message::SyncFileChanged => {
+                // Ignore the first sync event on startup (file creation triggers watcher)
+                if self.ignore_next_sync {
+                    self.ignore_next_sync = false;
+                    return Task::none();
                 }
-                Task::none()
+
+                // Another instance completed an update check, sync our state
+                // Only sync if we're not already checking and haven't checked very recently
+                if !self.checking_updates && self.config.package_manager.is_some() {
+                    let should_sync = self.last_check.map_or(true, |last| {
+                        last.elapsed().as_secs() > 3 // Only sync if our last check was more than 3 seconds ago
+                    });
+
+                    if should_sync {
+                        Task::done(cosmic::Action::App(Message::CheckForUpdates))
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                }
             }
         }
     }
@@ -532,28 +445,16 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
     fn subscription(&self) -> Subscription<Self::Message> {
         let mut subscriptions = vec![];
 
-        // Only set up timer if we have a package manager configured
+        // Timer subscription for periodic checks
         if self.config.package_manager.is_some() {
             let timer_subscription = time::every(Duration::from_secs(self.config.check_interval_minutes as u64 * 60))
                 .map(|_| Message::Timer);
             subscriptions.push(timer_subscription);
-        }
 
-        // Set up DBus listener for synchronization with other instances
-        if self.notifier.is_some() {
+            // File watcher subscription to sync with other instances
             let sync_subscription = Subscription::run_with_id(
-                "dbus_sync",
-async_stream::stream! {
-                    // Create a new notifier for the subscription
-                    if let Ok(notifier) = UpdateNotifier::new().await {
-                        if let Ok(stream) = notifier.listen_for_updates().await {
-                            let mut pinned_stream = std::pin::pin!(stream);
-                            while let Some(_) = pinned_stream.next().await {
-                                yield Message::SyncWithOtherInstances;
-                            }
-                        }
-                    }
-                }
+                "sync_watcher",
+                Self::watch_sync_file()
             );
             subscriptions.push(sync_subscription);
         }
@@ -567,6 +468,59 @@ async_stream::stream! {
 }
 
 impl CosmicAppletPackageUpdater {
+    fn get_sync_path() -> PathBuf {
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .unwrap_or_else(|_| "/tmp".to_string());
+        PathBuf::from(runtime_dir).join("cosmic-package-updater.sync")
+    }
+
+    fn watch_sync_file() -> impl futures::Stream<Item = Message> {
+        use notify::{Watcher, RecursiveMode, Event};
+        use futures::channel::mpsc;
+        use futures::StreamExt;
+
+        async_stream::stream! {
+            let sync_path = Self::get_sync_path();
+
+            // Ensure the parent directory exists
+            if let Some(parent) = sync_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
+            // Create the sync file if it doesn't exist
+            if !sync_path.exists() {
+                let _ = std::fs::File::create(&sync_path);
+            }
+
+            let (tx, mut rx) = mpsc::unbounded();
+
+            let mut watcher = match notify::recommended_watcher(move |res: Result<Event, _>| {
+                if let Ok(event) = res {
+                    if event.kind.is_modify() || event.kind.is_create() {
+                        let _ = tx.unbounded_send(());
+                    }
+                }
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("Failed to create file watcher: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = watcher.watch(&sync_path, RecursiveMode::NonRecursive) {
+                eprintln!("Failed to watch sync file: {}", e);
+                return;
+            }
+
+            while let Some(_) = rx.next().await {
+                // Small delay to avoid rapid fire events
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                yield Message::SyncFileChanged;
+            }
+        }
+    }
+
     fn handle_toggle_popup(&mut self) -> Task<Message> {
         if let Some(p) = self.popup.take() {
             destroy_popup(p)
