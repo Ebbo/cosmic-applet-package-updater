@@ -614,6 +614,17 @@ impl CosmicAppletPackageUpdater {
                 .into()
         );
 
+        // Update System button right after Check for Updates if updates available
+        if self.update_info.has_updates() {
+            widgets.push(
+                button::text("Update System")
+                    .on_press(Message::LaunchTerminalUpdate)
+                    .width(cosmic::iced::Length::Fill)
+                    .into()
+            );
+            widgets.push(text("💡 Tip: Middle-click on the Panel icon").size(10).into());
+        }
+
         if self.update_info.has_updates() {
             widgets.push(Space::with_height(cosmic::iced::Length::Fixed(16.0)).into());
 
@@ -679,14 +690,6 @@ impl CosmicAppletPackageUpdater {
                 .into()
             );
 
-            widgets.push(Space::with_height(cosmic::iced::Length::Fixed(16.0)).into());
-            widgets.push(
-                button::text("🚀 Update System")
-                    .on_press(Message::LaunchTerminalUpdate)
-                    .width(cosmic::iced::Length::Fill)
-                    .into()
-            );
-            widgets.push(text("💡 Tip: Middle-click the icon for quick update").size(10).into());
         }
 
         column()
