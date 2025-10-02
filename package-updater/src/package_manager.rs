@@ -194,7 +194,7 @@ impl UpdateChecker {
         }
     }
 
-    pub async fn check_updates(&self, _include_aur: bool) -> Result<UpdateInfo> {
+    pub async fn check_updates(&self, include_aur: bool) -> Result<UpdateInfo> {
         // Try to acquire lock first
         let _lock = match Self::acquire_lock().await {
             Ok(lock) => lock,
@@ -237,8 +237,8 @@ impl UpdateChecker {
             }
         }
 
-        // Step 2: Only after official check is done, check AUR updates
-        if self.package_manager.supports_aur() {
+        // Step 2: Only after official check is done, check AUR updates if enabled
+        if include_aur && self.package_manager.supports_aur() {
             match self.check_aur_updates().await {
                 Ok(aur_updates) => {
                     let count = aur_updates.len();

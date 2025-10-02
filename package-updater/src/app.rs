@@ -273,9 +273,10 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                     self.checking_updates = true;
                     self.error_message = None;
                     let checker = UpdateChecker::new(pm);
+                    let include_aur = self.config.include_aur_updates;
                     return Task::perform(
                         async move {
-                            match checker.check_updates(true).await {
+                            match checker.check_updates(include_aur).await {
                                 Ok(result) => Ok(result),
                                 Err(e) => {
                                     eprintln!("Update check failed: {}", e);
