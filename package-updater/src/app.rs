@@ -2,6 +2,7 @@ use cosmic::app::{Core, Task};
 use cosmic::cosmic_config::Config;
 use cosmic::iced::{time, Subscription, window::Id, Limits};
 use cosmic::iced::platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup};
+use cosmic::iced::window;
 use cosmic::widget::{
     button, column, row, text, text_input, toggler, Space, horizontal_space, divider, scrollable
 };
@@ -42,6 +43,7 @@ pub enum Message {
     UpdatesChecked(Result<UpdateInfo, String>),
     ConfigChanged(PackageUpdaterConfig),
     LaunchTerminalUpdate,
+    TerminalFinished,
     Timer,
     DiscoverPackageManagers,
     SelectPackageManager(PackageManager),
@@ -276,13 +278,7 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                     let include_aur = self.config.include_aur_updates;
                     return Task::perform(
                         async move {
-                            match checker.check_updates(include_aur).await {
-                                Ok(result) => Ok(result),
-                                Err(e) => {
-                                    eprintln!("Update check failed: {}", e);
-                                    Err(e)
-                                }
-                            }
+                            checker.check_updates(include_aur).await
                         },
                         |result| cosmic::Action::App(Message::UpdatesChecked(result.map_err(|e| e.to_string()))),
                     );
@@ -315,25 +311,55 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
 
                     return Task::perform(
                         async move {
-                            // Start the terminal process and wait for it to complete
-                            if let Ok(mut child) = tokio::process::Command::new(&terminal)
+                            // Create a unique marker file to track when the terminal closes
+                            let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                                .unwrap_or_else(|_| "/tmp".to_string());
+                            let marker_file = format!("{}/cosmic-package-updater-terminal-{}.marker", runtime_dir, std::process::id());
+
+                            // Create the marker file
+                            let _ = std::fs::File::create(&marker_file);
+
+                            // Build command that removes marker file when done
+                            let wrapped_command = format!(
+                                "{} && echo \"Update completed. Press Enter to exit...\" && read; rm -f \"{}\"",
+                                command.replace("\"", "\\\""),
+                                marker_file
+                            );
+
+                            // Spawn the terminal (it will return immediately due to daemonization)
+                            match tokio::process::Command::new(&terminal)
                                 .arg("-e")
                                 .arg("sh")
                                 .arg("-c")
-                                .arg(&format!("{} && echo 'Update completed. Press Enter to exit...' && read", command))
+                                .arg(&wrapped_command)
                                 .spawn()
                             {
-                                // Wait for the terminal window to close (process to exit)
-                                let _ = child.wait().await;
+                                Ok(_) => {
+                                    // Poll for marker file deletion (terminal closed)
+                                    loop {
+                                        if !std::path::Path::new(&marker_file).exists() {
+                                            break;
+                                        }
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                    }
 
-                                // Add a delay to allow system to stabilize after update
-                                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                                    // Add a delay to allow system to stabilize after update
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                                }
+                                Err(_) => {
+                                    // Clean up marker file on error
+                                    let _ = std::fs::remove_file(&marker_file);
+                                }
                             }
                         },
-                        |_| cosmic::Action::App(Message::CheckForUpdates),
+                        |()| cosmic::Action::App(Message::TerminalFinished),
                     );
                 }
                 Task::none()
+            }
+            Message::TerminalFinished => {
+                // Terminal has finished, trigger update check immediately
+                Task::done(cosmic::Action::App(Message::CheckForUpdates))
             }
             Message::ConfigChanged(config) => {
                 let old_package_manager = self.config.package_manager;
@@ -542,7 +568,11 @@ impl CosmicAppletPackageUpdater {
                     .min_width(450.0)
                     .min_height(350.0)
                     .max_height(600.0);
-                get_popup(popup_settings)
+
+                Task::batch(vec![
+                    get_popup(popup_settings),
+                    window::gain_focus(new_id),
+                ])
             } else {
                 eprintln!("Failed to get main window ID for popup");
                 self.error_message = Some("Unable to open popup window".to_string());
