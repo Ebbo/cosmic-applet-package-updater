@@ -3,16 +3,17 @@
   <id>com.cosmic.PackageUpdater</id>
 
   <name>Package Updater</name>
-  <summary>COSMIC Package Updater Applet for Arch Linux</summary>
+  <summary>Package update notifier applet for COSMIC Desktop</summary>
 
   <description>
     <p>
-      A modern package update manager applet for the COSMIC desktop environment on Arch Linux,
-      providing seamless package management directly from the panel.
+      A modern package update manager applet for the COSMIC desktop environment,
+      providing seamless package management directly from the panel across multiple Linux distributions.
     </p>
     <p>
-      Features include support for pacman, paru, and yay package managers, visual status indicators,
-      automatic update checking, and separate tracking of official repository and AUR packages.
+      Features include support for multiple package managers (Pacman, Paru, Yay, APT, DNF, Zypper, APK, Flatpak),
+      visual status indicators, automatic update checking, and separate tracking of official repository and AUR packages
+      on Arch-based systems.
     </p>
   </description>
 
@@ -33,8 +34,11 @@
     <keyword>pacman</keyword>
     <keyword>paru</keyword>
     <keyword>yay</keyword>
+    <keyword>apt</keyword>
+    <keyword>dnf</keyword>
+    <keyword>zypper</keyword>
+    <keyword>flatpak</keyword>
     <keyword>AUR</keyword>
-    <keyword>arch</keyword>
     <keyword>applet</keyword>
   </keywords>
 

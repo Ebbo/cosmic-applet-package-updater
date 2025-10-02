@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Package Updater
-Comment=COSMIC Package Updater Applet for Arch Linux
+Comment=Package update notifier applet for COSMIC Desktop
 Icon=software-update-available
 Exec=package-updater
 Categories=System;
