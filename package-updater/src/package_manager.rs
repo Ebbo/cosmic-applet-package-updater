@@ -8,9 +8,20 @@ use std::io::{Write, ErrorKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackageManager {
+    // Arch Linux
     Pacman,
     Paru,
     Yay,
+    // Debian/Ubuntu
+    Apt,
+    // Fedora/RHEL
+    Dnf,
+    // openSUSE/SUSE
+    Zypper,
+    // Alpine Linux
+    Apk,
+    // Universal
+    Flatpak,
 }
 
 impl PackageManager {
@@ -19,6 +30,11 @@ impl PackageManager {
             PackageManager::Pacman => "pacman",
             PackageManager::Paru => "paru",
             PackageManager::Yay => "yay",
+            PackageManager::Apt => "apt",
+            PackageManager::Dnf => "dnf",
+            PackageManager::Zypper => "zypper",
+            PackageManager::Apk => "apk",
+            PackageManager::Flatpak => "flatpak",
         }
     }
 
@@ -32,6 +48,11 @@ impl PackageManager {
             PackageManager::Pacman => "sudo pacman -Syu".to_string(),
             PackageManager::Paru => "paru -Syu".to_string(),
             PackageManager::Yay => "yay -Syu".to_string(),
+            PackageManager::Apt => "sudo apt update && sudo apt upgrade".to_string(),
+            PackageManager::Dnf => "sudo dnf upgrade".to_string(),
+            PackageManager::Zypper => "sudo zypper update".to_string(),
+            PackageManager::Apk => "sudo apk upgrade".to_string(),
+            PackageManager::Flatpak => "flatpak update".to_string(),
         }
     }
 }
@@ -79,7 +100,20 @@ impl PackageManagerDetector {
     pub fn detect_available() -> Vec<PackageManager> {
         let mut available = Vec::new();
 
-        for pm in [PackageManager::Paru, PackageManager::Yay, PackageManager::Pacman] {
+        // Check in order of preference
+        for pm in [
+            // AUR helpers first (most feature-rich for Arch)
+            PackageManager::Paru,
+            PackageManager::Yay,
+            // System package managers
+            PackageManager::Pacman,
+            PackageManager::Apt,
+            PackageManager::Dnf,
+            PackageManager::Zypper,
+            PackageManager::Apk,
+            // Universal package managers
+            PackageManager::Flatpak,
+        ] {
             if Self::is_available(pm) {
                 available.push(pm);
             }
@@ -241,9 +275,34 @@ impl UpdateChecker {
     }
 
     async fn check_official_updates(&self) -> Result<Vec<PackageUpdate>> {
-        // Always use checkupdates for official packages as it's more reliable
-        // and doesn't require database synchronization
-        self.parse_update_output("checkupdates", vec![], false).await
+        let (cmd, args) = match self.package_manager {
+            // Arch-based systems
+            PackageManager::Pacman | PackageManager::Paru | PackageManager::Yay => {
+                ("checkupdates", vec![])
+            }
+            // Debian/Ubuntu
+            PackageManager::Apt => {
+                ("apt", vec!["list", "--upgradable"])
+            }
+            // Fedora/RHEL
+            PackageManager::Dnf => {
+                ("dnf", vec!["check-update", "-q"])
+            }
+            // openSUSE/SUSE
+            PackageManager::Zypper => {
+                ("zypper", vec!["list-updates"])
+            }
+            // Alpine Linux
+            PackageManager::Apk => {
+                ("apk", vec!["-u", "list"])
+            }
+            // Flatpak
+            PackageManager::Flatpak => {
+                ("flatpak", vec!["remote-ls", "--updates"])
+            }
+        };
+
+        self.parse_update_output(cmd, args, false).await
     }
 
     async fn check_aur_updates(&self) -> Result<Vec<PackageUpdate>> {
@@ -251,6 +310,8 @@ impl UpdateChecker {
             PackageManager::Pacman => return Ok(Vec::new()),
             PackageManager::Paru => ("paru", vec!["-Qu", "--aur"]),
             PackageManager::Yay => ("yay", vec!["-Qu", "--aur"]),
+            // Other package managers don't have AUR support
+            _ => return Ok(Vec::new()),
         };
 
         self.parse_update_output(cmd, args, true).await
@@ -268,16 +329,28 @@ impl UpdateChecker {
             // Handle exit codes more carefully
             // checkupdates returns 2 when no updates are available
             // paru/yay return 1 when no updates are available
+            // dnf returns 100 when updates are available, 0 when no updates
+            // apt returns non-zero on error but we check stdout
             if (cmd == "checkupdates" && exit_code == 2) ||
-               ((cmd == "paru" || cmd == "yay") && exit_code == 1) {
-                // No updates available - this is a success case
-                return Ok(Vec::new());
+               ((cmd == "paru" || cmd == "yay") && exit_code == 1) ||
+               (cmd == "dnf" && exit_code == 100) {
+                // No updates available or special success case
+                if cmd == "dnf" && exit_code == 100 {
+                    // dnf exit code 100 means updates ARE available, continue parsing
+                } else {
+                    return Ok(Vec::new());
+                }
+            } else {
+                // Any other exit code might still have valid output for some package managers
+                // Check if we have stdout output before failing
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.trim().is_empty() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("Update check failed with exit code {}: {}", exit_code, stderr);
+                    return Err(anyhow!("Failed to check for updates (exit {}): {}", exit_code, stderr));
+                }
+                // Otherwise continue to parse the output
             }
-
-            // Any other exit code is an error
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("Update check failed with exit code {}: {}", exit_code, stderr);
-            return Err(anyhow!("Failed to check for updates (exit {}): {}", exit_code, stderr));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -293,28 +366,159 @@ impl UpdateChecker {
     }
 
     fn parse_package_line(&self, line: &str, is_aur: bool) -> Option<PackageUpdate> {
-        // Handle different output formats
-        if line.contains(" -> ") {
-            // Format: "package 1.0.0-1 -> 1.0.1-1"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 && parts[2] == "->" {
-                return Some(PackageUpdate {
-                    name: parts[0].to_string(),
-                    current_version: parts[1].to_string(),
-                    new_version: parts[3].to_string(),
-                    is_aur,
-                });
+        // Skip header lines
+        if line.starts_with("Listing...") || line.starts_with("Done") ||
+           line.starts_with("WARNING:") || line.starts_with("S |") ||
+           line.starts_with("--+") || line.trim().is_empty() {
+            return None;
+        }
+
+        match self.package_manager {
+            // Arch-based: "package 1.0.0-1 -> 1.0.1-1" or "package 1.0.1-1"
+            PackageManager::Pacman | PackageManager::Paru | PackageManager::Yay => {
+                if line.contains(" -> ") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 4 && parts[2] == "->" {
+                        return Some(PackageUpdate {
+                            name: parts[0].to_string(),
+                            current_version: parts[1].to_string(),
+                            new_version: parts[3].to_string(),
+                            is_aur,
+                        });
+                    }
+                } else {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        return Some(PackageUpdate {
+                            name: parts[0].to_string(),
+                            current_version: "unknown".to_string(),
+                            new_version: parts[1].to_string(),
+                            is_aur,
+                        });
+                    }
+                }
             }
-        } else {
-            // Format: "package 1.0.1-1"
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                return Some(PackageUpdate {
-                    name: parts[0].to_string(),
-                    current_version: "unknown".to_string(),
-                    new_version: parts[1].to_string(),
-                    is_aur,
-                });
+
+            // APT: "package/suite version arch [upgradable from: old-version]"
+            PackageManager::Apt => {
+                if line.contains("[upgradable from:") {
+                    // Split by '/' to get package name
+                    let name = line.split('/').next()?.to_string();
+
+                    // Extract new version (between '/' and architecture)
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    let new_version = if parts.len() >= 2 {
+                        parts[1].to_string()
+                    } else {
+                        "unknown".to_string()
+                    };
+
+                    // Extract old version from [upgradable from: X]
+                    let current_version = if let Some(from_idx) = line.find("[upgradable from: ") {
+                        let start = from_idx + "[upgradable from: ".len();
+                        if let Some(end_idx) = line[start..].find(']') {
+                            line[start..start + end_idx].to_string()
+                        } else {
+                            "unknown".to_string()
+                        }
+                    } else {
+                        "unknown".to_string()
+                    };
+
+                    return Some(PackageUpdate {
+                        name,
+                        current_version,
+                        new_version,
+                        is_aur: false,
+                    });
+                }
+            }
+
+            // DNF: "package.arch version repo" (3 columns)
+            PackageManager::Dnf => {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    // First part is "package.arch"
+                    let name = parts[0].split('.').next()?.to_string();
+                    let new_version = parts[1].to_string();
+
+                    return Some(PackageUpdate {
+                        name,
+                        current_version: "unknown".to_string(),
+                        new_version,
+                        is_aur: false,
+                    });
+                }
+            }
+
+            // Zypper: table format with columns
+            // Skip status column and parse name and version
+            PackageManager::Zypper => {
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 4 {
+                    let name = parts[1].trim().to_string();
+                    let new_version = parts[3].trim().to_string();
+
+                    return Some(PackageUpdate {
+                        name,
+                        current_version: "unknown".to_string(),
+                        new_version,
+                        is_aur: false,
+                    });
+                }
+            }
+
+            // APK: "package-version [upgradable from: old-version]"
+            PackageManager::Apk => {
+                if line.contains("[upgradable from:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 1 {
+                        // First part contains package-version, need to extract package name
+                        let pkg_info = parts[0];
+                        let name = if let Some(dash_idx) = pkg_info.rfind('-') {
+                            pkg_info[..dash_idx].to_string()
+                        } else {
+                            pkg_info.to_string()
+                        };
+
+                        // Extract versions
+                        let new_version = parts.get(1).unwrap_or(&"unknown").to_string();
+
+                        let current_version = if let Some(from_idx) = line.find("[upgradable from: ") {
+                            let start = from_idx + "[upgradable from: ".len();
+                            if let Some(end_idx) = line[start..].find(']') {
+                                line[start..start + end_idx].to_string()
+                            } else {
+                                "unknown".to_string()
+                            }
+                        } else {
+                            "unknown".to_string()
+                        };
+
+                        return Some(PackageUpdate {
+                            name,
+                            current_version,
+                            new_version,
+                            is_aur: false,
+                        });
+                    }
+                }
+            }
+
+            // Flatpak: "name\tapp-id\tversion\tbranch\tremote"
+            PackageManager::Flatpak => {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 3 {
+                    let name = parts[0].to_string();
+                    let new_version = parts[2].to_string();
+
+                    return Some(PackageUpdate {
+                        name,
+                        current_version: "unknown".to_string(),
+                        new_version,
+                        is_aur: false,
+                    });
+                }
             }
         }
 

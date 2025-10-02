@@ -674,6 +674,7 @@ impl CosmicAppletPackageUpdater {
             widgets.push(
                 cosmic::widget::container(
                     scrollable(package_list)
+                        .width(cosmic::iced::Length::Fill)
                         .height(cosmic::iced::Length::Fixed(100.0)) // Reasonable height with more popup space
                 )
                 .style(|_theme| cosmic::widget::container::Style {
