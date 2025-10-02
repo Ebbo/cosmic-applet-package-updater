@@ -4,12 +4,6 @@ A lightweight and efficient package update notifier applet for the COSMIC deskto
 
 Supports multiple Linux distributions including Arch Linux, Debian/Ubuntu, Fedora, openSUSE, Alpine, and more!
 
-## AUR Quick Installation
-
-```bash
-paru -S cosmic-applet-package-updater-git
-```
-
 ![Main Interface](screenshots/Package-Updater-Main.png)
 
 ## Features
@@ -325,7 +319,3 @@ This project is licensed under the GPL-3.0 License - see the LICENSE file for de
 ## Credits
 
 Developed for the COSMIC Desktop community.
-
-## Links
-
-- **AUR Package**: [cosmic-applet-package-updater-git](https://aur.archlinux.org/packages/cosmic-applet-package-updater-git)
