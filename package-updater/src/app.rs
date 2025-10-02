@@ -585,8 +585,14 @@ impl CosmicAppletPackageUpdater {
             widgets.push(text(format!("Error: {}", error)).size(18).into());
         } else if self.update_info.has_updates() {
             widgets.push(text(format!("{} updates available", self.update_info.total_updates)).size(18).into());
-            widgets.push(text(format!("Official packages: {}", self.update_info.official_updates)).into());
-            widgets.push(text(format!("AUR packages: {}", self.update_info.aur_updates)).into());
+
+            // Only show package breakdown if package manager supports AUR
+            if let Some(pm) = self.config.package_manager {
+                if pm.supports_aur() {
+                    widgets.push(text(format!("Official packages: {}", self.update_info.official_updates)).into());
+                    widgets.push(text(format!("AUR packages: {}", self.update_info.aur_updates)).into());
+                }
+            }
         } else {
             widgets.push(text("System is up to date").size(18).into());
         }
@@ -635,32 +641,48 @@ impl CosmicAppletPackageUpdater {
             // Create scrollable list of packages
             let mut package_list = column().spacing(4);
 
-            // Group packages by type
-            let official_packages: Vec<_> = self.update_info.packages.iter()
-                .filter(|p| !p.is_aur)
-                .collect();
-            let aur_packages: Vec<_> = self.update_info.packages.iter()
-                .filter(|p| p.is_aur)
-                .collect();
+            // Group packages by type - only if package manager supports AUR
+            let supports_aur = self.config.package_manager
+                .map(|pm| pm.supports_aur())
+                .unwrap_or(false);
 
-            if !official_packages.is_empty() {
-                package_list = package_list.push(text("Official:").size(12));
-                for package in official_packages.iter() { // Show all packages, no limit
-                    let package_text = if package.current_version != "unknown" {
-                        format!("  {} {} → {}", package.name, package.current_version, package.new_version)
-                    } else {
-                        format!("  {} → {}", package.name, package.new_version)
-                    };
-                    package_list = package_list.push(text(package_text).size(10));
-                }
-            }
+            if supports_aur {
+                let official_packages: Vec<_> = self.update_info.packages.iter()
+                    .filter(|p| !p.is_aur)
+                    .collect();
+                let aur_packages: Vec<_> = self.update_info.packages.iter()
+                    .filter(|p| p.is_aur)
+                    .collect();
 
-            if !aur_packages.is_empty() {
                 if !official_packages.is_empty() {
-                    package_list = package_list.push(Space::with_height(cosmic::iced::Length::Fixed(8.0)));
+                    package_list = package_list.push(text("Official:").size(12));
+                    for package in official_packages.iter() {
+                        let package_text = if package.current_version != "unknown" {
+                            format!("  {} {} → {}", package.name, package.current_version, package.new_version)
+                        } else {
+                            format!("  {} → {}", package.name, package.new_version)
+                        };
+                        package_list = package_list.push(text(package_text).size(10));
+                    }
                 }
-                package_list = package_list.push(text("AUR:").size(12));
-                for package in aur_packages.iter() { // Show all packages, no limit
+
+                if !aur_packages.is_empty() {
+                    if !official_packages.is_empty() {
+                        package_list = package_list.push(Space::with_height(cosmic::iced::Length::Fixed(8.0)));
+                    }
+                    package_list = package_list.push(text("AUR:").size(12));
+                    for package in aur_packages.iter() {
+                        let package_text = if package.current_version != "unknown" {
+                            format!("  {} {} → {}", package.name, package.current_version, package.new_version)
+                        } else {
+                            format!("  {} → {}", package.name, package.new_version)
+                        };
+                        package_list = package_list.push(text(package_text).size(10));
+                    }
+                }
+            } else {
+                // No AUR support - show all packages without grouping
+                for package in self.update_info.packages.iter() {
                     let package_text = if package.current_version != "unknown" {
                         format!("  {} {} → {}", package.name, package.current_version, package.new_version)
                     } else {
@@ -754,15 +776,20 @@ impl CosmicAppletPackageUpdater {
                 .into(),
         );
 
-        widgets.push(
-            row()
-                .spacing(8)
-                .align_y(cosmic::iced::Alignment::Center)
-                .push(text("Include AUR updates"))
-                .push(Space::with_width(cosmic::iced::Length::Fill))
-                .push(toggler(self.config.include_aur_updates).on_toggle(Message::ToggleIncludeAur))
-                .into(),
-        );
+        // Only show AUR toggle if package manager supports it
+        if let Some(pm) = self.config.package_manager {
+            if pm.supports_aur() {
+                widgets.push(
+                    row()
+                        .spacing(8)
+                        .align_y(cosmic::iced::Alignment::Center)
+                        .push(text("Include AUR updates"))
+                        .push(Space::with_width(cosmic::iced::Length::Fill))
+                        .push(toggler(self.config.include_aur_updates).on_toggle(Message::ToggleIncludeAur))
+                        .into(),
+                );
+            }
+        }
 
         widgets.push(
             row()
