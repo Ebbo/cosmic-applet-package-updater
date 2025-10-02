@@ -1,20 +1,26 @@
 # COSMIC Package Updater Applet
 
-A lightweight and efficient package update notifier applet for the COSMIC desktop environment on Arch Linux. Stay informed about system updates with real-time notifications and seamless integration into your COSMIC panel.
+A lightweight and efficient package update notifier applet for the COSMIC desktop environment. Stay informed about system updates with real-time notifications and seamless integration into your COSMIC panel.
 
-## Installation
+Supports multiple Linux distributions including Arch Linux, Debian/Ubuntu, Fedora, openSUSE, Alpine, and more!
+
+## AUR Quick Installation
 
 ```bash
 paru -S cosmic-applet-package-updater-git
 ```
 
-![Updates Available](screenshots/Package-Updater-Updates.png)
+![Main Interface](screenshots/Package-Updater-Main.png)
 
 ## Features
 
 ### 📦 **Package Manager Support**
-- **Pacman**: Official Arch Linux repository packages
-- **Paru / Yay **: Recommended - supports both official and AUR packages
+- **Arch Linux**: Pacman, Paru, Yay (with AUR support)
+- **Debian/Ubuntu/Pop!_OS**: APT
+- **Fedora/RHEL**: DNF
+- **openSUSE/SUSE**: Zypper
+- **Alpine Linux**: APK
+- **Universal**: Flatpak
 - **Auto-detection**: Automatically discovers available package managers on first launch
 
 ### 🔄 **Update Management**
@@ -25,7 +31,7 @@ paru -S cosmic-applet-package-updater-git
   - ❌ Error icon: Error occurred
 - **Automatic Checking**: Configurable interval-based update checking (default: 60 minutes)
 - **One-Click Updates**: Launch system updates directly from the applet in your preferred terminal
-- **Detailed Package List**: View all available updates with version information, separated by official and AUR packages
+- **Detailed Package List**: View all available updates with version information (AUR packages shown separately on Arch-based systems)
 - **Instance Synchronization**: Multiple applet instances stay in sync automatically
 
 ### 🎨 **User Interface**
@@ -37,10 +43,10 @@ paru -S cosmic-applet-package-updater-git
 - **Scrollable Package List**: View all updates in an organized, easy-to-read format
 
 ### ⚙️ **Configuration Options**
-- **Package Manager Selection**: Choose between Pacman/Paru/Yay
+- **Package Manager Selection**: Choose from detected package managers
 - **Check Interval**: Set how often to check for updates (1-1440 minutes)
 - **Auto-check on Startup**: Automatically check for updates when applet starts
-- **Include AUR Updates**: Toggle AUR package update detection
+- **Include AUR Updates**: Toggle AUR package update detection (Arch Linux only)
 - **Show Notifications**: Enable/disable update notifications (feature ready)
 - **Show Update Count**: Display the number of updates in the panel icon
 - **Preferred Terminal**: Set your preferred terminal emulator (default: cosmic-term)
@@ -60,7 +66,7 @@ paru -S cosmic-applet-package-updater-git
 ## Screenshots
 
 ### Updates Tab
-![Main Interface](screenshots/Package-Updater-Main.png)
+![Updates Available](screenshots/Package-Updater-Updates.png)
 *The main updates tab showing available updates with package details*
 
 ### Settings Tab
@@ -91,29 +97,68 @@ yay -S cosmic-applet-package-updater-git
    cd cosmic-applet-package-updater
    ```
 
-2. **Build the project**:
+2. **Build and install** (using just):
+   ```bash
+   just build-release
+   sudo just install
+   ```
+
+   Or manually with cargo:
    ```bash
    cd package-updater
    cargo build --release
-   ```
-
-3. **Install system-wide** (optional):
-   ```bash
    sudo install -Dm755 target/release/package-updater /usr/bin/cosmic-applet-package-updater
    ```
 
 ### Prerequisites
 
-- **Operating System**: Arch Linux or Arch-based distribution
+#### All Distributions
 - **Desktop Environment**: COSMIC Desktop
-- **Rust**: 1.80 or newer
-- **Package Manager**: At least one of:
-  - `pacman` (required for official packages)
-  - `paru` (recommended, for AUR support)
-  - `yay` (alternative AUR helper)
-- **System Tools**:
-  - `checkupdates` (from `pacman-contrib` package)
-  - Terminal emulator (cosmic-term recommended)
+- **Rust**: 1.80 or newer (for building from source)
+- **Terminal Emulator**: cosmic-term (recommended) or any terminal supporting `-e` flag
+
+#### Build Dependencies
+
+**Arch Linux / Manjaro:**
+```bash
+sudo pacman -S rust cargo base-devel
+```
+
+**Debian / Ubuntu / Pop!_OS:**
+```bash
+sudo apt install cargo libxkbcommon-dev pkg-config
+```
+
+**Fedora / RHEL:**
+```bash
+sudo dnf install cargo libxkbcommon-devel pkgconfig
+```
+
+**openSUSE:**
+```bash
+sudo zypper install cargo libxkbcommon-devel pkg-config
+```
+
+#### Runtime Dependencies (Distribution-Specific)
+
+**Arch Linux:**
+- `pacman-contrib` (for `checkupdates` command)
+- Optional: `paru` or `yay` for AUR support
+
+**Debian/Ubuntu/Pop!_OS:**
+- `apt` (pre-installed)
+
+**Fedora/RHEL:**
+- `dnf` (pre-installed)
+
+**openSUSE:**
+- `zypper` (pre-installed)
+
+**Alpine:**
+- `apk` (pre-installed)
+
+**Universal (any distribution):**
+- `flatpak` (optional)
 
 ## Usage
 
@@ -142,7 +187,7 @@ The applet will appear as an icon in your COSMIC panel.
 - **Package Manager**: Select from detected package managers
 - **Check Interval**: Set minutes between automatic checks (1-1440)
 - **Auto-check on startup**: Toggle automatic checking when applet starts
-- **Include AUR updates**: Enable/disable AUR package detection
+- **Include AUR updates**: Enable/disable AUR package detection (only shown on Arch Linux with Paru/Yay)
 - **Show notifications**: Enable/disable update notifications
 - **Show update count**: Toggle update count badge on panel icon
 - **Preferred Terminal**: Set terminal command (default: cosmic-term)
@@ -188,11 +233,27 @@ $XDG_RUNTIME_DIR/cosmic-package-updater.sync
 
 ### Update Detection
 
-The applet uses these commands to detect updates:
+The applet uses distribution-specific commands to detect updates:
 
+**Arch Linux:**
 - **Official Packages**: `checkupdates` (from pacman-contrib)
 - **AUR Packages (Paru)**: `paru -Qu --aur`
 - **AUR Packages (Yay)**: `yay -Qu --aur`
+
+**Debian/Ubuntu/Pop!_OS:**
+- `apt list --upgradable`
+
+**Fedora/RHEL:**
+- `dnf check-update -q`
+
+**openSUSE/SUSE:**
+- `zypper list-updates`
+
+**Alpine:**
+- `apk -u list`
+
+**Flatpak:**
+- `flatpak remote-ls --updates`
 
 ### Smart Features
 
@@ -218,13 +279,16 @@ The applet uses these commands to detect updates:
 - Check COSMIC Settings → Desktop → Panel settings
 
 ### No package managers found
-- Install `pacman-contrib` for the `checkupdates` command: `sudo pacman -S pacman-contrib`
-- For AUR support, install `paru` or `yay`
+- **Arch Linux**: Install `pacman-contrib` for the `checkupdates` command: `sudo pacman -S pacman-contrib`
+- **Arch Linux (AUR)**: Install `paru` or `yay` for AUR support
+- **Other distros**: The default package manager (apt/dnf/zypper/apk) should be pre-installed
 - Click "Discover Package Managers" button in the Settings tab
 - Ensure package managers are in your `$PATH`
 
 ### Updates not showing correctly
-- Verify `checkupdates` works from command line: `checkupdates`
+- **Arch Linux**: Verify `checkupdates` works from command line: `checkupdates`
+- **Debian/Ubuntu**: Try `apt list --upgradable` from command line
+- **Fedora**: Try `dnf check-update` from command line
 - Check that the correct package manager is selected in Settings
 - Try clicking "Check for Updates" manually
 - Check system logs for error messages
