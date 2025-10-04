@@ -4,7 +4,7 @@ use cosmic::iced::{time, Subscription, window::Id, Limits};
 use cosmic::iced::platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup};
 use cosmic::iced::window;
 use cosmic::widget::{
-    button, column, row, text, text_input, toggler, Space, horizontal_space, divider, scrollable
+    button, column, row, text, text_input, toggler, Space, horizontal_space, divider, scrollable, autosize
 };
 use cosmic::Element;
 use std::time::{Duration, Instant};
@@ -139,17 +139,23 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
                     .push(cosmic::widget::icon::from_name(self.get_icon_name()).size(16))
                     .push(text(count_text).size(12))
             )
-            .padding([8, 4]) // More top padding to push icon down from panel top
+            .padding([8, 4])
             .class(cosmic::theme::Button::AppletIcon)
             .on_press(Message::TogglePopup);
 
-            if self.update_info.has_updates() {
+            let limits = Limits::NONE.min_width(1.0).min_height(1.0);
+
+            let content: Element<_> = if self.update_info.has_updates() {
                 cosmic::widget::mouse_area(custom_button)
                     .on_middle_press(Message::LaunchTerminalUpdate)
                     .into()
             } else {
                 custom_button.into()
-            }
+            };
+
+            autosize::autosize(content, cosmic::widget::Id::unique())
+                .limits(limits)
+                .into()
         } else {
             let icon_button = self.core
                 .applet
