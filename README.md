@@ -87,7 +87,7 @@ yay -S cosmic-applet-package-updater-git
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-repo/cosmic-applet-package-updater.git
+   git clone https://github.com/Ebbo/cosmic-applet-package-updater.git
    cd cosmic-applet-package-updater
    ```
 
