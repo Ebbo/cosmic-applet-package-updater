@@ -264,7 +264,7 @@ impl cosmic::Application for CosmicAppletPackageUpdater {
             .limits(
                 Limits::NONE
                     .min_height(350.0)
-                    .max_height(600.0)
+                    .max_height(800.0)
                     .min_width(450.0)
                     .max_width(550.0)
             )
@@ -573,7 +573,7 @@ impl CosmicAppletPackageUpdater {
                     .max_width(550.0)
                     .min_width(450.0)
                     .min_height(350.0)
-                    .max_height(600.0);
+                    .max_height(800.0);
 
                 Task::batch(vec![
                     get_popup(popup_settings),
