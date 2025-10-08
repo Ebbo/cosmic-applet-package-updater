@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Package Updater
-Comment=Package update notifier applet for COSMIC Desktop
+Comment=Package update notifier applet for the COSMIC™ desktop
 Icon=software-update-available
-Exec=package-updater
+Exec=cosmic-ext-applet-package-updater
 Categories=System;
 X-CosmicApplet=true

@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.cosmic.PackageUpdater</id>
+  <id>com.github.cosmic_ext.PackageUpdater</id>
 
   <name>Package Updater</name>
-  <summary>Package update notifier applet for COSMIC Desktop</summary>
+  <summary>Package update notifier applet for the COSMIC™ desktop</summary>
 
   <description>
     <p>
-      A modern package update manager applet for the COSMIC desktop environment,
+      A modern package update manager applet for the COSMIC™ desktop,
       providing seamless package management directly from the panel across multiple Linux distributions.
     </p>
     <p>
@@ -17,10 +17,10 @@
     </p>
   </description>
 
-  <launchable type="desktop-id">com.cosmic.PackageUpdater.desktop</launchable>
+  <launchable type="desktop-id">com.github.cosmic_ext.PackageUpdater.desktop</launchable>
 
   <provides>
-    <binary>package-updater</binary>
+    <binary>cosmic-ext-applet-package-updater</binary>
   </provides>
 
   <categories>
@@ -51,7 +51,7 @@
   <releases>
     <release version="1.0.0" date="2024-09-27">
       <description>
-        <p>Initial release of COSMIC Package Updater Applet</p>
+        <p>Initial release of Package Updater Applet for the COSMIC™ desktop</p>
         <ul>
           <li>Support for pacman, paru, and yay package managers</li>
           <li>Visual status indicators in COSMIC panel</li>

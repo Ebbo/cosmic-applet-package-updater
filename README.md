@@ -1,6 +1,6 @@
-# COSMIC Package Updater Applet
+# Package Updater Applet for COSMIC™
 
-A lightweight and efficient package update notifier applet for the COSMIC desktop environment. Stay informed about system updates with real-time notifications and seamless integration into your COSMIC panel.
+A lightweight and efficient package update notifier applet for the COSMIC™ desktop. Stay informed about system updates with real-time notifications and seamless integration into your COSMIC panel.
 
 Supports multiple Linux distributions including Arch Linux, Debian/Ubuntu, Fedora, openSUSE, Alpine, and more!
 
@@ -101,13 +101,13 @@ yay -S cosmic-applet-package-updater-git
    ```bash
    cd package-updater
    cargo build --release
-   sudo install -Dm755 target/release/package-updater /usr/bin/cosmic-applet-package-updater
+   sudo install -Dm755 target/release/cosmic-ext-applet-package-updater /usr/bin/cosmic-ext-applet-package-updater
    ```
 
 ### Prerequisites
 
 #### All Distributions
-- **Desktop Environment**: COSMIC Desktop
+- **Desktop Environment**: COSMIC™ desktop
 - **Rust**: 1.80 or newer (for building from source)
 - **Terminal Emulator**: cosmic-term (recommended) or any terminal supporting `-e` flag
 
@@ -214,7 +214,7 @@ The applet will appear as an icon in your COSMIC panel.
 
 Settings are stored in:
 ```
-~/.config/cosmic/com.cosmic.PackageUpdater/
+~/.config/cosmic/com.github.cosmic_ext.PackageUpdater/
 ```
 
 Lock and sync files (automatically managed):
@@ -259,7 +259,7 @@ The applet uses distribution-specific commands to detect updates:
 
 ## Technical Details
 
-- **Framework**: Built with libcosmic (COSMIC's UI toolkit)
+- **Framework**: Built with libcosmic
 - **Language**: Rust
 - **Async Operations**: All package manager calls are non-blocking (tokio)
 - **Configuration**: Persistent settings with cosmic-config
@@ -268,7 +268,7 @@ The applet uses distribution-specific commands to detect updates:
 ## Troubleshooting
 
 ### Applet not appearing in panel
-- Ensure the applet is properly installed: `which cosmic-applet-package-updater` should return a path
+- Ensure the applet is properly installed: `which cosmic-ext-applet-package-updater` should return a path
 - Restart the COSMIC panel or log out and back in
 - Check COSMIC Settings → Desktop → Panel settings
 
@@ -318,4 +318,4 @@ This project is licensed under the GPL-3.0 License - see the LICENSE file for de
 
 ## Credits
 
-Developed for the COSMIC Desktop community.
+Developed for the COSMIC™ desktop community.

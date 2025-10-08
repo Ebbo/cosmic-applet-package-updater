@@ -1,5 +1,5 @@
-name := 'package-updater'
-export APPID := 'com.cosmic.PackageUpdater'
+name := 'cosmic-ext-applet-package-updater'
+export APPID := 'com.github.cosmic_ext.PackageUpdater'
 
 rootdir := ''
 prefix := '/usr'

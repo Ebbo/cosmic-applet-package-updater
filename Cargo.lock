@@ -1054,6 +1054,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmic-ext-applet-package-updater"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "chrono",
+ "cosmic-config 0.1.0 (git+https://github.com/pop-os/libcosmic.git?rev=52b802a)",
+ "futures",
+ "libcosmic",
+ "notify",
+ "rand 0.8.5",
+ "regex",
+ "serde",
+ "tokio",
+ "toml",
+ "zbus 5.7.1",
+]
+
+[[package]]
 name = "cosmic-freedesktop-icons"
 version = "0.3.0"
 source = "git+https://github.com/pop-os/freedesktop-icons#8a05c322c482ff3c69cf34bacfee98907ac45307"
@@ -3480,25 +3499,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22ec719bbf3b2a81c109a4e20b1f129b5566b7dce654bc3872f6a05abf82b2c4"
 dependencies = [
  "ttf-parser 0.25.1",
-]
-
-[[package]]
-name = "package-updater"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "chrono",
- "cosmic-config 0.1.0 (git+https://github.com/pop-os/libcosmic.git?rev=52b802a)",
- "futures",
- "libcosmic",
- "notify",
- "rand 0.8.5",
- "regex",
- "serde",
- "tokio",
- "toml",
- "zbus 5.7.1",
 ]
 
 [[package]]

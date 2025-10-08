@@ -32,7 +32,7 @@ impl Default for PackageUpdaterConfig {
 
 impl PackageUpdaterConfig {
     pub fn load() -> (Config, Self) {
-        let config = Config::new("com.cosmic.PackageUpdater", CONFIG_VERSION).unwrap();
+        let config = Config::new("com.github.cosmic_ext.PackageUpdater", CONFIG_VERSION).unwrap();
         let config_helper = Self::get_entry(&config).unwrap_or_default();
         (config, config_helper)
     }

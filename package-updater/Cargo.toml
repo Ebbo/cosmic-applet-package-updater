@@ -1,5 +1,5 @@
 [package]
-name = "package-updater"
+name = "cosmic-ext-applet-package-updater"
 version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0"
