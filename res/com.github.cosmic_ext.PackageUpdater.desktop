@@ -5,4 +5,5 @@ Comment=Package update notifier applet for the COSMIC™ desktop
 Icon=software-update-available
 Exec=cosmic-ext-applet-package-updater
 Categories=System;
+NoDisplay=true
 X-CosmicApplet=true
