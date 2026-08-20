@@ -2,7 +2,7 @@
 
 A lightweight and efficient package update notifier applet for the COSMIC™ desktop. Stay informed about system updates with real-time notifications and seamless integration into your COSMIC panel.
 
-Supports multiple Linux distributions including Arch Linux, Debian/Ubuntu, Fedora, openSUSE, Alpine, and more!
+Supports multiple Linux distributions including Arch Linux, Debian/Ubuntu, Fedora, openSUSE, Alpine, AerynOS, and more!
 
 ![Main Interface](screenshots/Package-Updater-Main.png)
 
@@ -14,6 +14,7 @@ Supports multiple Linux distributions including Arch Linux, Debian/Ubuntu, Fedor
 - **Fedora/RHEL**: DNF
 - **openSUSE/SUSE**: Zypper
 - **Alpine Linux**: APK
+- **AerynOS**: moss
 - **Universal**: Flatpak
 - **Auto-detection**: Automatically discovers available package managers on first launch
 
@@ -133,6 +134,11 @@ sudo dnf install cargo libxkbcommon-devel pkgconfig
 sudo zypper install cargo libxkbcommon-devel pkg-config
 ```
 
+**AerynOS:**
+```bash
+sudo moss install rust libxkbcommon-devel wayland-devel pkg-config
+```
+
 #### Runtime Dependencies (Distribution-Specific)
 
 **Arch Linux:**
@@ -150,6 +156,9 @@ sudo zypper install cargo libxkbcommon-devel pkg-config
 
 **Alpine:**
 - `apk` (pre-installed)
+
+**AerynOS:**
+- `moss` (pre-installed)
 
 **Universal (any distribution):**
 - `flatpak` (optional)
@@ -246,6 +255,10 @@ The applet uses distribution-specific commands to detect updates:
 **Alpine:**
 - `apk -u list`
 
+**AerynOS:**
+- `moss list sync`, run against a private repository index the applet refreshes itself
+  (see [Update detection on AerynOS](#update-detection-on-aerynos))
+
 **Flatpak:**
 - `flatpak remote-ls --updates`
 
@@ -256,6 +269,36 @@ The applet uses distribution-specific commands to detect updates:
 - **File-Based Locking**: Uses `$XDG_RUNTIME_DIR/cosmic-package-updater.lock` to prevent simultaneous checks
 - **File Watcher Sync**: Monitors `$XDG_RUNTIME_DIR/cosmic-package-updater.sync` to sync instances
 - **Debouncing**: 3-second minimum between syncs to prevent rapid repeated checks
+
+### Update detection on AerynOS
+
+`moss` only reports update candidates that are already present in its repository
+index, and refreshing the system index (`moss repo update`) requires root. So that
+the applet never needs privileges, it assembles a small moss root of its own under
+`$XDG_CACHE_HOME/cosmic-package-updater/moss-root` which symlinks the system's
+installed-package database, active state and repository configuration, but keeps
+its own copy of the repository index:
+
+```
+moss-root/
+├── usr         -> /usr          # active state id
+├── etc/moss    -> /etc/moss     # repository configuration
+└── .moss/
+    ├── db      -> /.moss/db     # installed packages
+    └── repo/                    # private index, refreshed by the applet
+```
+
+`moss -D <moss-root> repo update` then refreshes that private index and
+`moss -D <moss-root> list sync` lists the resulting changes. Nothing is written to
+the system moss root and the system moss lock is never taken, so a background check
+can't block an install you are running. This mirrors what `checkupdates` does for
+pacman. The private index costs roughly 20 MB of cache.
+
+If the private root cannot be prepared, the applet falls back to reporting against
+the system's own index.
+
+**Update System** runs `sudo moss sync -u`, which refreshes the repositories and
+then syncs, so the update applies the same candidates the applet reported.
 
 ## Technical Details
 
@@ -275,7 +318,7 @@ The applet uses distribution-specific commands to detect updates:
 ### No package managers found
 - **Arch Linux**: Install `pacman-contrib` for the `checkupdates` command: `sudo pacman -S pacman-contrib`
 - **Arch Linux (AUR)**: Install `paru` or `yay` for AUR support
-- **Other distros**: The default package manager (apt/dnf/zypper/apk) should be pre-installed
+- **Other distros**: The default package manager (apt/dnf/zypper/apk/moss) should be pre-installed
 - Click "Discover Package Managers" button in the Settings tab
 - Ensure package managers are in your `$PATH`
 
@@ -283,6 +326,9 @@ The applet uses distribution-specific commands to detect updates:
 - **Arch Linux**: Verify `checkupdates` works from command line: `checkupdates`
 - **Debian/Ubuntu**: Try `apt list --upgradable` from command line
 - **Fedora**: Try `dnf check-update` from command line
+- **AerynOS**: Try `moss list sync` from command line; delete
+  `$XDG_CACHE_HOME/cosmic-package-updater/moss-root` to force the applet to rebuild
+  its private repository index
 - Check that the correct package manager is selected in Settings
 - Try clicking "Check for Updates" manually
 - Check system logs for error messages

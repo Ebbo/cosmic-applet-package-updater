@@ -11,7 +11,7 @@
       providing seamless package management directly from the panel across multiple Linux distributions.
     </p>
     <p>
-      Features include support for multiple package managers (Pacman, Paru, Yay, APT, DNF, Zypper, APK, Flatpak),
+      Features include support for multiple package managers (Pacman, Paru, Yay, APT, DNF, Zypper, APK, moss, Flatpak),
       visual status indicators, automatic update checking, and separate tracking of official repository and AUR packages
       on Arch-based systems.
     </p>
