@@ -256,8 +256,8 @@ The applet uses distribution-specific commands to detect updates:
 - `apk -u list`
 
 **AerynOS:**
-- `moss list sync`, run against a private repository index the applet refreshes itself
-  (see [Update detection on AerynOS](#update-detection-on-aerynos))
+- `moss sync --dry-run`, run against a private repository index the applet refreshes
+  itself (see [Update detection on AerynOS](#update-detection-on-aerynos))
 
 **Flatpak:**
 - `flatpak remote-ls --updates`
@@ -289,10 +289,21 @@ moss-root/
 ```
 
 `moss -D <moss-root> repo update` then refreshes that private index and
-`moss -D <moss-root> list sync` lists the resulting changes. Nothing is written to
-the system moss root and the system moss lock is never taken, so a background check
-can't block an install you are running. This mirrors what `checkupdates` does for
-pacman. The private index costs roughly 20 MB of cache.
+`moss -D <moss-root> sync --dry-run` reports the changes a sync would make. Nothing
+is written to the system moss root and the system moss lock is never taken, so a
+background check can't block an install you are running. This mirrors what
+`checkupdates` does for pacman. The private index costs roughly 20 MB of cache, and
+resolving the plan takes a few seconds of CPU per check.
+
+The plan is read from `moss sync --dry-run` rather than the cheaper `moss list sync`
+because `list sync` only reports a package whose *source release* differs from the
+installed one. That hides two kinds of change `moss sync` nonetheless applies:
+
+- a package rebuilt and republished at the same version and release, e.g. because a
+  dependency it links against was updated
+- a dependency that is not installed yet and that the sync would newly pull in
+
+Reading the plan keeps the applet's list equal to what **Update System** installs.
 
 If the private root cannot be prepared, the applet falls back to reporting against
 the system's own index.
@@ -326,7 +337,7 @@ then syncs, so the update applies the same candidates the applet reported.
 - **Arch Linux**: Verify `checkupdates` works from command line: `checkupdates`
 - **Debian/Ubuntu**: Try `apt list --upgradable` from command line
 - **Fedora**: Try `dnf check-update` from command line
-- **AerynOS**: Try `moss list sync` from command line; delete
+- **AerynOS**: Try `moss sync --dry-run` from command line; delete
   `$XDG_CACHE_HOME/cosmic-package-updater/moss-root` to force the applet to rebuild
   its private repository index
 - Check that the correct package manager is selected in Settings

@@ -285,17 +285,6 @@ impl UpdateChecker {
     }
 
     async fn check_official_updates(&self) -> Result<Vec<PackageUpdate>> {
-        // moss only reports candidates that are already in its repository index,
-        // so refresh a private index first. This needs no privileges, unlike
-        // refreshing the system index.
-        if matches!(self.package_manager, PackageManager::Moss) {
-            if let Some(root) = Self::refreshed_moss_root().await {
-                return self
-                    .parse_update_output("moss", vec!["-D", &root, "list", "sync"], false)
-                    .await;
-            }
-        }
-
         let (cmd, args) = match self.package_manager {
             // Arch-based systems
             PackageManager::Pacman | PackageManager::Paru | PackageManager::Yay => {
@@ -317,11 +306,9 @@ impl UpdateChecker {
             PackageManager::Apk => {
                 ("apk", vec!["-u", "list"])
             }
-            // AerynOS: only reached when the private index above is unavailable,
-            // in which case the system index is the best we can report against.
-            PackageManager::Moss => {
-                ("moss", vec!["list", "sync"])
-            }
+            // AerynOS: moss reports a whole sync plan rather than one package
+            // per line, so it needs its own command and parser.
+            PackageManager::Moss => return self.check_moss_updates().await,
             // Flatpak
             PackageManager::Flatpak => {
                 ("flatpak", vec!["remote-ls", "--updates"])
@@ -356,6 +343,38 @@ impl UpdateChecker {
     ///
     /// Returns `None` when the private root is unusable, so the caller can fall
     /// back to querying the system index directly.
+    /// Ask moss what `moss sync` would actually do.
+    ///
+    /// `moss list sync` is not enough: it only reports a package whose source
+    /// release differs from the installed one, so it misses packages rebuilt at
+    /// the same release and dependencies the sync would newly pull in. `moss
+    /// sync` applies both, so the applet would keep reporting fewer updates than
+    /// the update button goes on to install.
+    async fn check_moss_updates(&self) -> Result<Vec<PackageUpdate>> {
+        // moss can only offer candidates that are already in its repository
+        // index. Refreshing the system index needs privileges, so refresh a
+        // private one and fall back to the system index when that fails.
+        let root = Self::refreshed_moss_root().await;
+        let mut args: Vec<&str> = Vec::new();
+        if let Some(root) = &root {
+            args.extend(["-D", root.as_str()]);
+        }
+        // A dry run resolves the sync without downloading or writing anything.
+        args.extend(["sync", "--dry-run"]);
+
+        let output = TokioCommand::new("moss").args(&args).output().await?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "moss sync --dry-run failed (exit {}): {}",
+                output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+
+        Ok(parse_moss_sync_plan(&String::from_utf8_lossy(&output.stdout)))
+    }
+
     async fn refreshed_moss_root() -> Option<String> {
         let root = match Self::prepare_moss_check_root() {
             Ok(root) => root,
@@ -634,27 +653,9 @@ impl UpdateChecker {
                 }
             }
 
-            // moss: "name    1.2.3-4 => 1.2.5-6 - Package summary"
-            // Only packages with a sync candidate carry the " => " marker, and
-            // `moss list sync` prints nothing else.
-            PackageManager::Moss => {
-                let line = strip_ansi(line);
-                let (installed, candidate) = line.split_once(" => ")?;
-
-                let mut installed = installed.split_whitespace();
-                let name = installed.next()?.to_string();
-                // The version column is right aligned, so the version is the
-                // last field of the installed half.
-                let current_version = installed.next_back()?.to_string();
-                let new_version = candidate.split_whitespace().next()?.to_string();
-
-                return Some(PackageUpdate {
-                    name,
-                    current_version,
-                    new_version,
-                    is_aur: false,
-                });
-            }
+            // moss prints a whole sync plan rather than one package per line,
+            // so it is parsed by `parse_moss_sync_plan` instead.
+            PackageManager::Moss => {}
 
             // Flatpak: "name\tapp-id\tversion\tbranch\tremote"
             PackageManager::Flatpak => {
@@ -676,6 +677,85 @@ impl UpdateChecker {
         None
     }
 
+}
+
+/// Parse the plan that `moss sync --dry-run` prints.
+///
+/// The plan is laid out in columns that reflow with the terminal width, so it is
+/// parsed as a stream of whitespace separated tokens instead of column by column.
+/// Neither package names nor versions contain whitespace, which makes the ` -> `
+/// of an update a reliable anchor:
+///
+/// ```text
+/// The following packages will be added:
+///
+/// passim  0.1.12-1
+///
+/// The following packages will be updated:
+///
+/// fwupd  2.1.7-1 -> 2.1.7-1   modemmanager  1.24.2-6 -> 1.24.2-1
+/// ```
+fn parse_moss_sync_plan(output: &str) -> Vec<PackageUpdate> {
+    enum Section {
+        Added,
+        Updated,
+        Ignored,
+    }
+
+    let mut section = Section::Ignored;
+    let mut added: Vec<String> = Vec::new();
+    let mut updated: Vec<String> = Vec::new();
+
+    for line in output.lines() {
+        let line = strip_ansi(line);
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.starts_with("The following") {
+            // Orphaned removals also land here and are deliberately ignored:
+            // they are a consequence of the other changes, not an update.
+            section = if line.contains(" will be added") {
+                Section::Added
+            } else if line.contains(" will be updated") {
+                Section::Updated
+            } else {
+                Section::Ignored
+            };
+            continue;
+        }
+
+        match section {
+            Section::Added => added.extend(line.split_whitespace().map(str::to_string)),
+            Section::Updated => updated.extend(line.split_whitespace().map(str::to_string)),
+            Section::Ignored => {}
+        }
+    }
+
+    // Every update reads `name old -> new`, so anchor each one on its arrow.
+    let mut packages: Vec<PackageUpdate> = updated
+        .iter()
+        .enumerate()
+        .filter(|(i, token)| *token == "->" && *i >= 2 && i + 1 < updated.len())
+        .map(|(i, _)| PackageUpdate {
+            name: updated[i - 2].clone(),
+            current_version: updated[i - 1].clone(),
+            new_version: updated[i + 1].clone(),
+            is_aur: false,
+        })
+        .collect();
+
+    // Additions read `name version`. They carry no installed version, which the
+    // applet renders by showing the name on its own.
+    packages.extend(added.chunks_exact(2).map(|entry| PackageUpdate {
+        name: entry[0].clone(),
+        current_version: "unknown".to_string(),
+        new_version: entry[1].clone(),
+        is_aur: false,
+    }));
+
+    packages
 }
 
 /// Remove ANSI escape sequences from a line of package manager output.
@@ -708,70 +788,132 @@ fn strip_ansi(line: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Verbatim excerpt of `moss list sync` on an `AerynOS` 2026.08 system.
-    const MOSS_LIST_SYNC: &str = "\
-accountsservice                        26.13.3-10 => 26.27.3-13 - D-BUS encapsulation for user and account management
-adwaita-fonts                                  50.0-4 => 51.0-5 - The typefaces for GNOME
-boulder        0.26.6+git.42d4675-155 => 0.26.8+git.4e60c77-164 - Modern package building tool
-device-mapper-libs                     2.03.41-20 => 2.03.42-22 - Device mapper utility - library
-gstreamer-plugins-bad-libs               1.28.4-53 => 1.28.6-58 - GStreamer streaming media framework \"bad\" plugins - libs
-libass                                     0.17.4-4 => 0.17.5-5 - libass is a portable subtitle renderer for the ASS/SSA (Advanced Substation Alpha/Substation Alpha) subtitle format.";
+    /// Verbatim `moss sync --dry-run` output on an `AerynOS` 2026.08 system,
+    /// trailing spaces and all.
+    const MOSS_SYNC_PLAN: &str = "\
+The following packages will be added: \n\
+\n\
+passim  0.1.12-1   \n\
+\n\
+The following packages will be updated: \n\
+\n\
+fwupd           2.1.7-1 -> 2.1.7-1   modemmanager  1.24.2-6 -> 1.24.2-1   python-scipy  1.18.0-1 -> 1.18.0-1   reaction        2.5.1-2 -> 2.5.1-3   \n\
+\n\
+The following orphaned packages will be removed: \n\
+\n\
+modemmanager-glib  1.24.2-6   \n";
 
-    fn moss_updates(output: &str) -> Vec<PackageUpdate> {
-        let checker = UpdateChecker::new(PackageManager::Moss);
-        output
-            .lines()
-            .filter_map(|line| checker.parse_package_line(line, false))
-            .collect()
+    fn find<'a>(updates: &'a [PackageUpdate], name: &str) -> &'a PackageUpdate {
+        updates
+            .iter()
+            .find(|p| p.name == name)
+            .unwrap_or_else(|| panic!("{name} missing from {updates:?}"))
     }
 
     #[test]
-    fn parses_every_line_of_real_moss_sync_output() {
-        let updates = moss_updates(MOSS_LIST_SYNC);
-        assert_eq!(updates.len(), MOSS_LIST_SYNC.lines().count());
+    fn parses_every_package_in_a_moss_sync_plan() {
+        let updates = parse_moss_sync_plan(MOSS_SYNC_PLAN);
 
-        assert_eq!(updates[0].name, "accountsservice");
-        assert_eq!(updates[0].current_version, "26.13.3-10");
-        assert_eq!(updates[0].new_version, "26.27.3-13");
-        assert!(!updates[0].is_aur);
+        // Four updates plus the one addition; the orphaned removal is not one.
+        assert_eq!(updates.len(), 5);
+
+        let modemmanager = find(&updates, "modemmanager");
+        assert_eq!(modemmanager.current_version, "1.24.2-6");
+        assert_eq!(modemmanager.new_version, "1.24.2-1");
+        assert!(!modemmanager.is_aur);
+
+        let reaction = find(&updates, "reaction");
+        assert_eq!(reaction.current_version, "2.5.1-2");
+        assert_eq!(reaction.new_version, "2.5.1-3");
+    }
+
+    #[test]
+    fn reports_moss_packages_rebuilt_at_the_same_release() {
+        // The reason this reads the sync plan instead of `moss list sync`: both
+        // of these are rebuilds at an unchanged source release, so `list sync`
+        // hides them even though `moss sync` replaces them.
+        let updates = parse_moss_sync_plan(MOSS_SYNC_PLAN);
+
+        let fwupd = find(&updates, "fwupd");
+        assert_eq!(fwupd.current_version, "2.1.7-1");
+        assert_eq!(fwupd.new_version, "2.1.7-1");
+
+        assert_eq!(find(&updates, "python-scipy").new_version, "1.18.0-1");
+    }
+
+    #[test]
+    fn reports_packages_a_moss_sync_would_newly_pull_in() {
+        // `moss list sync` walks installed packages only, so it never mentions a
+        // dependency the sync is about to add.
+        let passim = find(&parse_moss_sync_plan(MOSS_SYNC_PLAN), "passim").clone();
+
+        assert_eq!(passim.new_version, "0.1.12-1");
+        // Nothing is installed yet, which the applet renders as a bare name.
+        assert_eq!(passim.current_version, "unknown");
+    }
+
+    #[test]
+    fn leaves_moss_orphan_removals_out_of_the_update_list() {
+        let updates = parse_moss_sync_plan(MOSS_SYNC_PLAN);
+        assert!(!updates.iter().any(|p| p.name == "modemmanager-glib"));
+    }
+
+    #[test]
+    fn parses_a_moss_plan_that_reflowed_to_one_entry_per_line() {
+        // moss packs entries into as many columns as the terminal is wide, so
+        // the same plan has to parse identically however it was wrapped.
+        let narrow = "\
+The following packages will be added: \n\
+\n\
+passim  0.1.12-1   \n\
+\n\
+The following packages will be updated: \n\
+\n\
+fwupd           2.1.7-1 -> 2.1.7-1   \n\
+modemmanager  1.24.2-6 -> 1.24.2-1   \n\
+python-scipy  1.18.0-1 -> 1.18.0-1   \n\
+reaction        2.5.1-2 -> 2.5.1-3   \n\
+\n\
+The following orphaned packages will be removed: \n\
+\n\
+modemmanager-glib  1.24.2-6   \n";
+
+        let wide = parse_moss_sync_plan(MOSS_SYNC_PLAN);
+        let narrow = parse_moss_sync_plan(narrow);
+
+        assert_eq!(narrow.len(), wide.len());
+        for (narrow, wide) in narrow.iter().zip(&wide) {
+            assert_eq!(narrow.name, wide.name);
+            assert_eq!(narrow.current_version, wide.current_version);
+            assert_eq!(narrow.new_version, wide.new_version);
+        }
     }
 
     #[test]
     fn parses_moss_versions_containing_git_revisions() {
-        let updates = moss_updates(MOSS_LIST_SYNC);
-        let boulder = updates.iter().find(|p| p.name == "boulder").unwrap();
+        // Reformatted from a real plan: the version carries a git revision, so
+        // splitting a version on `-` or `.` would lose part of it.
+        let plan = "\
+The following packages will be updated: \n\
+\n\
+boulder  0.26.6+git.42d4675-155 -> 0.26.8+git.4e60c77-164   \n";
 
-        assert_eq!(boulder.current_version, "0.26.6+git.42d4675-155");
-        assert_eq!(boulder.new_version, "0.26.8+git.4e60c77-164");
+        let updates = parse_moss_sync_plan(plan);
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].name, "boulder");
+        assert_eq!(updates[0].current_version, "0.26.6+git.42d4675-155");
+        assert_eq!(updates[0].new_version, "0.26.8+git.4e60c77-164");
     }
 
     #[test]
-    fn keeps_summary_text_out_of_the_moss_version() {
-        // These summaries contain " - " and " => "-adjacent punctuation that a
-        // naive split on the summary separator would trip over.
-        let updates = moss_updates(MOSS_LIST_SYNC);
+    fn parses_a_moss_plan_that_carries_colour() {
+        let coloured = "\
+The following packages will be updated: \n\
+\n\
+\u{1b}[1macl\u{1b}[0m  \u{1b}[35m2.3.2\u{1b}[0m-\u{1b}[2m5\u{1b}[0m -> \u{1b}[32m2.4.0\u{1b}[0m-\u{1b}[2m6\u{1b}[0m   \n";
 
-        let dm = updates.iter().find(|p| p.name == "device-mapper-libs").unwrap();
-        assert_eq!(dm.new_version, "2.03.42-22");
-
-        let gst = updates
-            .iter()
-            .find(|p| p.name == "gstreamer-plugins-bad-libs")
-            .unwrap();
-        assert_eq!(gst.new_version, "1.28.6-58");
-    }
-
-    #[test]
-    fn ignores_moss_lines_without_a_sync_candidate() {
-        // `moss list installed` formatting: no " => ", so nothing to update.
-        let updates = moss_updates("acl                                      2.4.0-6 - Access control list utilities");
-        assert!(updates.is_empty());
-    }
-
-    #[test]
-    fn parses_moss_output_that_carries_colour() {
-        let coloured = "\u{1b}[1macl\u{1b}[0m   \u{1b}[35m2.3.2\u{1b}[0m-\u{1b}[2m5\u{1b}[0m => \u{1b}[32m2.4.0\u{1b}[0m-\u{1b}[2m6\u{1b}[0m - Access control list utilities";
-        let updates = moss_updates(coloured);
+        let updates = parse_moss_sync_plan(coloured);
 
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].name, "acl");
@@ -780,8 +922,14 @@ libass                                     0.17.4-4 => 0.17.5-5 - libass is a po
     }
 
     #[test]
+    fn reports_nothing_when_a_moss_sync_has_no_work() {
+        assert!(parse_moss_sync_plan("").is_empty());
+        assert!(parse_moss_sync_plan("No changes to make\n").is_empty());
+    }
+
+    #[test]
     fn strip_ansi_leaves_plain_text_untouched() {
-        let plain = "acl 2.3.2-5 => 2.4.0-6 - Access control list utilities";
+        let plain = "fwupd  2.1.7-1 -> 2.1.7-1   modemmanager  1.24.2-6 -> 1.24.2-1";
         assert_eq!(strip_ansi(plain), plain);
     }
 
