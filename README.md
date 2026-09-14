@@ -305,8 +305,11 @@ installed one. That hides two kinds of change `moss sync` nonetheless applies:
 
 Reading the plan keeps the applet's list equal to what **Update System** installs.
 
-If the private root cannot be prepared, the applet falls back to reporting against
-the system's own index.
+If the index cannot be refreshed, the applet still reports against whatever the
+previous refresh left behind, and labels the list in the popup as possibly out of
+date -- an unlabelled stale list is indistinguishable from a current one. If the
+private root cannot be prepared at all, it falls back to the system's own index,
+which only a privileged `moss` run ever refreshes, and says so.
 
 **Update System** runs `sudo moss sync -u`, which refreshes the repositories and
 then syncs, so the update applies the same candidates the applet reported.

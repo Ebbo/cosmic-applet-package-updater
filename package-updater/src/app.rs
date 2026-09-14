@@ -634,6 +634,12 @@ impl CosmicAppletPackageUpdater {
             widgets.push(text("System is up to date").size(18).into());
         }
 
+        // A list built without a successful index refresh has to say so, or it
+        // is indistinguishable from a current one.
+        if let Some(warning) = &self.update_info.stale_warning {
+            widgets.push(text(format!("\u{26a0} {}", warning)).size(12).into());
+        }
+
         // Last check time
         if let Some(last_check) = self.last_check {
             let elapsed = last_check.elapsed();

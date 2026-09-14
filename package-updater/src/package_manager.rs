@@ -78,6 +78,10 @@ pub struct UpdateInfo {
     pub official_updates: usize,
     pub aur_updates: usize,
     pub packages: Vec<PackageUpdate>,
+    /// Set when the list was produced without a successful index refresh, so
+    /// the packages below may be out of date. The applet shows this, because
+    /// a stale list is otherwise indistinguishable from a current one.
+    pub stale_warning: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +99,7 @@ impl UpdateInfo {
             official_updates: 0,
             aur_updates: 0,
             packages: Vec::new(),
+            stale_warning: None,
         }
     }
 
@@ -224,20 +229,22 @@ impl UpdateChecker {
 
         // Step 1: Check official updates first and wait for completion
         match self.check_official_updates().await {
-            Ok(official_updates) => {
+            Ok((official_updates, warning)) => {
                 let count = official_updates.len();
                 update_info.official_updates = count;
                 update_info.packages.extend(official_updates);
+                update_info.stale_warning = warning;
             }
             Err(e) => {
                 eprintln!("Failed to check official updates: {}", e);
                 // Retry once after a delay
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 match self.check_official_updates().await {
-                    Ok(official_updates) => {
+                    Ok((official_updates, warning)) => {
                         let count = official_updates.len();
                         update_info.official_updates = count;
                         update_info.packages.extend(official_updates);
+                        update_info.stale_warning = warning;
                     }
                     Err(e) => {
                         eprintln!("Retry failed for official updates: {}", e);
@@ -284,7 +291,7 @@ impl UpdateChecker {
         Ok(update_info)
     }
 
-    async fn check_official_updates(&self) -> Result<Vec<PackageUpdate>> {
+    async fn check_official_updates(&self) -> Result<(Vec<PackageUpdate>, Option<String>)> {
         let (cmd, args) = match self.package_manager {
             // Arch-based systems
             PackageManager::Pacman | PackageManager::Paru | PackageManager::Yay => {
@@ -315,7 +322,8 @@ impl UpdateChecker {
             }
         };
 
-        self.parse_update_output(cmd, args, false).await
+        // Only the moss backend can tell that its own index went stale.
+        Ok((self.parse_update_output(cmd, args, false).await?, None))
     }
 
     async fn check_aur_updates(&self) -> Result<Vec<PackageUpdate>> {
@@ -350,14 +358,14 @@ impl UpdateChecker {
     /// the same release and dependencies the sync would newly pull in. `moss
     /// sync` applies both, so the applet would keep reporting fewer updates than
     /// the update button goes on to install.
-    async fn check_moss_updates(&self) -> Result<Vec<PackageUpdate>> {
+    async fn check_moss_updates(&self) -> Result<(Vec<PackageUpdate>, Option<String>)> {
         // moss can only offer candidates that are already in its repository
         // index. Refreshing the system index needs privileges, so refresh a
         // private one and fall back to the system index when that fails.
         let root = Self::refreshed_moss_root().await;
         let mut args: Vec<&str> = Vec::new();
         if let Some(root) = &root {
-            args.extend(["-D", root.as_str()]);
+            args.extend(["-D", root.path.as_str()]);
         }
         // A dry run resolves the sync without downloading or writing anything.
         args.extend(["sync", "--dry-run"]);
@@ -365,17 +373,15 @@ impl UpdateChecker {
         let output = TokioCommand::new("moss").args(&args).output().await?;
 
         if !output.status.success() {
-            return Err(anyhow!(
-                "moss sync --dry-run failed (exit {}): {}",
-                output.status.code().unwrap_or(-1),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
+            return Err(anyhow!(describe_failure("moss sync --dry-run", &output)));
         }
 
-        Ok(parse_moss_sync_plan(&String::from_utf8_lossy(&output.stdout)))
+        let packages = parse_moss_sync_plan(&String::from_utf8_lossy(&output.stdout));
+
+        Ok((packages, staleness_warning(root.as_ref())))
     }
 
-    async fn refreshed_moss_root() -> Option<String> {
+    async fn refreshed_moss_root() -> Option<MossCheckRoot> {
         let root = match Self::prepare_moss_check_root() {
             Ok(root) => root,
             Err(e) => {
@@ -384,25 +390,24 @@ impl UpdateChecker {
             }
         };
 
-        match TokioCommand::new("moss")
+        let refreshed = match TokioCommand::new("moss")
             .args(["-D", &root, "repo", "update"])
             .output()
             .await
         {
-            Ok(output) if output.status.success() => Some(root),
+            Ok(output) if output.status.success() => true,
             Ok(output) => {
-                eprintln!(
-                    "moss repo update failed: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                );
-                // An index from an earlier refresh is still worth reporting on.
-                Self::moss_root_has_index(&root).then_some(root)
+                eprintln!("{}", describe_failure("moss repo update", &output));
+                false
             }
             Err(e) => {
                 eprintln!("Could not run moss repo update: {e}");
-                Self::moss_root_has_index(&root).then_some(root)
+                false
             }
-        }
+        };
+
+        let has_index = Self::moss_root_has_index(&root);
+        moss_root_after_refresh(root, refreshed, has_index)
     }
 
     /// Create the private moss root described by [`Self::refreshed_moss_root`]
@@ -679,6 +684,83 @@ impl UpdateChecker {
 
 }
 
+/// The moss root an update check runs against.
+struct MossCheckRoot {
+    path: String,
+    /// Set when the repository index could not be refreshed, so the check is
+    /// reading whatever the previous refresh left behind.
+    stale: Option<String>,
+}
+
+/// Decide which root a check may use, once the refresh has been attempted.
+///
+/// Kept free of I/O so the decision is testable: the failing branch is the one
+/// that matters, and it only ever runs when `moss` itself is unwell.
+fn moss_root_after_refresh(path: String, refreshed: bool, has_index: bool) -> Option<MossCheckRoot> {
+    if refreshed {
+        return Some(MossCheckRoot { path, stale: None });
+    }
+
+    // A failed refresh leaves whatever the previous one wrote. That is still
+    // worth reporting on, but it must be marked, or a stale list reads exactly
+    // like a current one.
+    has_index.then(|| MossCheckRoot {
+        path,
+        stale: Some(
+            "Could not refresh the package index; this list may be out of date.".to_string(),
+        ),
+    })
+}
+
+/// The warning an update list must carry, given the root it came from.
+///
+/// A list produced without a successful refresh has to announce itself: it is
+/// otherwise indistinguishable from a current one, which is how four failed
+/// refreshes passed unnoticed in a user's journal.
+fn staleness_warning(root: Option<&MossCheckRoot>) -> Option<String> {
+    match root {
+        Some(root) => root.stale.clone(),
+        // Without a private root the check reports against the system index,
+        // which only a privileged `moss` run ever refreshes.
+        None => Some(
+            "Reporting against the system package index, which the applet cannot refresh."
+                .to_string(),
+        ),
+    }
+}
+
+/// Describe a failed command for a diagnostic.
+///
+/// Both streams are read deliberately: moss writes its errors to *stdout* and
+/// leaves stderr empty, so a diagnostic that read only stderr could never say
+/// anything at all. Which stream a command uses is not ours to assume, and on a
+/// non-zero exit quoting both costs nothing.
+fn describe_failure(cmd: &str, output: &std::process::Output) -> String {
+    /// Enough to carry a real error; short enough not to flood the log.
+    const MAX_STREAM: usize = 400;
+
+    let mut description = format!("{cmd} failed (exit {})", output.status.code().unwrap_or(-1));
+
+    for (name, bytes) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
+        let text = String::from_utf8_lossy(bytes);
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+
+        description.push_str(&format!(" {name}: "));
+        match text.char_indices().nth(MAX_STREAM) {
+            Some((cut, _)) => {
+                description.push_str(&text[..cut]);
+                description.push_str("...");
+            }
+            None => description.push_str(text),
+        }
+    }
+
+    description
+}
+
 /// Parse the plan that `moss sync --dry-run` prints.
 ///
 /// The plan is laid out in columns that reflow with the terminal width, so it is
@@ -931,6 +1013,122 @@ The following packages will be updated: \n\
     fn strip_ansi_leaves_plain_text_untouched() {
         let plain = "fwupd  2.1.7-1 -> 2.1.7-1   modemmanager  1.24.2-6 -> 1.24.2-1";
         assert_eq!(strip_ansi(plain), plain);
+    }
+
+    /// Build a failed `Output` with the given streams.
+    fn failed_output(code: i32, stdout: &str, stderr: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn describes_a_failure_that_was_written_only_to_stdout() {
+        // This is moss's actual shape, captured from `moss -D <root> repo
+        // update` against an unreachable repository: non-zero exit, *empty*
+        // stderr, the whole error on stdout. The diagnostic this replaces read
+        // stderr alone, so it could only ever print an empty reason -- which is
+        // exactly what four lines in the user's journal show.
+        let moss_error = "Error: repo: repo manager: fetch index file: request: fetch: \
+HTTP status client error (404 Not Found) for url (https://cdn.aerynos.dev/x/stone.index)";
+        let described = describe_failure("moss repo update", &failed_output(1, moss_error, ""));
+
+        assert!(described.contains("exit 1"), "{described}");
+        assert!(described.contains("404 Not Found"), "{described}");
+        assert!(described.contains("stdout"), "{described}");
+    }
+
+    #[test]
+    fn describes_a_failure_that_was_written_only_to_stderr() {
+        // The well-behaved case must keep working.
+        let described = describe_failure("moss sync", &failed_output(2, "", "permission denied"));
+
+        assert!(described.contains("exit 2"), "{described}");
+        assert!(described.contains("permission denied"), "{described}");
+        assert!(!described.contains("stdout"), "{described}");
+    }
+
+    #[test]
+    fn describes_a_failure_that_used_both_streams() {
+        let described = describe_failure("moss", &failed_output(1, "on out", "on err"));
+
+        assert!(described.contains("on out"), "{described}");
+        assert!(described.contains("on err"), "{described}");
+    }
+
+    #[test]
+    fn keeps_a_runaway_stream_out_of_the_log() {
+        let described = describe_failure("moss", &failed_output(1, &"x".repeat(5000), ""));
+
+        assert!(described.len() < 1000, "not truncated: {} chars", described.len());
+        assert!(described.ends_with("..."), "{described}");
+    }
+
+    #[test]
+    fn a_fresh_update_info_carries_no_staleness_warning() {
+        // The warning must be absent unless a refresh actually failed, or it
+        // would cry wolf on every check.
+        assert!(UpdateInfo::new().stale_warning.is_none());
+    }
+
+    #[test]
+    fn a_successful_refresh_yields_a_root_that_is_not_marked_stale() {
+        let root = moss_root_after_refresh("/tmp/root".to_string(), true, true)
+            .expect("a refreshed root is usable");
+
+        assert_eq!(root.path, "/tmp/root");
+        assert!(root.stale.is_none());
+    }
+
+    #[test]
+    fn a_failed_refresh_marks_the_surviving_index_stale() {
+        // The case that went unnoticed in production: the previous index is
+        // still there and still useful, but the list built from it is old.
+        let root = moss_root_after_refresh("/tmp/root".to_string(), false, true)
+            .expect("an existing index is still worth reporting on");
+
+        assert!(root.stale.is_some(), "a failed refresh must mark the root stale");
+    }
+
+    #[test]
+    fn a_failed_refresh_with_no_index_yields_no_root() {
+        // Nothing was ever fetched, so there is nothing to report against.
+        assert!(moss_root_after_refresh("/tmp/root".to_string(), false, false).is_none());
+    }
+
+    #[test]
+    fn a_refreshed_root_produces_no_warning() {
+        let root = MossCheckRoot {
+            path: "/tmp/root".to_string(),
+            stale: None,
+        };
+
+        assert!(staleness_warning(Some(&root)).is_none());
+    }
+
+    #[test]
+    fn a_root_whose_refresh_failed_warns_that_the_list_may_be_stale() {
+        let root = MossCheckRoot {
+            path: "/tmp/root".to_string(),
+            stale: Some("Could not refresh the package index; this list may be out of date."
+                .to_string()),
+        };
+        let warning = staleness_warning(Some(&root)).expect("a failed refresh must warn");
+
+        assert!(warning.contains("out of date"), "{warning}");
+    }
+
+    #[test]
+    fn falling_back_to_the_system_index_warns_too() {
+        // No private root at all: the applet is reading an index it cannot
+        // refresh, so the list is only as fresh as the user's last root `moss`.
+        let warning = staleness_warning(None).expect("the fallback must warn");
+
+        assert!(warning.contains("system package index"), "{warning}");
     }
 
     #[test]
